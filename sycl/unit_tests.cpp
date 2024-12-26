@@ -235,3 +235,122 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 		CHECK(copy_set == expected_copy_set);
 	}
 }
+
+std::byte* test_staging_buffer_provider(device_id id, int64_t) { return reinterpret_cast<std::byte*>(0x42 + 0x100 * static_cast<int>(id)); }
+
+TEST_CASE("staging copy specs at the source end", "[staging]") {
+	const data_layout source_layout{nullptr, 0, 16, 64, 128};
+	const data_layout target_layout{nullptr, 0, 1024};
+
+	SECTION("no staging desired") {
+		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const copy_strategy strategy{copy_type::direct, copy_properties::none, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 1);
+		CHECK(copy_plan.front() == spec);
+	}
+
+	SECTION("no staging necessary") {
+		const copy_spec spec{device_id::d0, target_layout, device_id::d1, target_layout};
+		const auto copy_type = GENERATE(copy_type::direct, copy_type::staged);
+		const copy_strategy strategy{copy_type, copy_properties::none, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 1);
+		CHECK(copy_plan.front() == spec);
+	}
+
+	SECTION("staging required") {
+		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		CAPTURE(props);
+		const copy_strategy strategy{copy_type::staged, props, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 2);
+		CHECK(copy_plan.front().properties == props);
+		CHECK(copy_plan.front().source_device == device_id::d0);
+		CHECK(copy_plan.front().source_layout == source_layout);
+		CHECK(copy_plan.front().target_device == device_id::d0);
+		CHECK(copy_plan.front().target_layout.unit_stride());
+		CHECK(copy_plan.front().target_layout.base == reinterpret_cast<std::byte*>(0x42));
+		CHECK(copy_plan.back().properties == props);
+		CHECK(copy_plan.back().source_device == device_id::d0);
+		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
+		CHECK(copy_plan.back().target_device == device_id::d1);
+		CHECK(copy_plan.back().target_layout == target_layout);
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+}
+
+TEST_CASE("staging copy specs at the target end", "[staging]") {
+	const data_layout source_layout{nullptr, 0, 512};
+	const data_layout target_layout{nullptr, 0, 8, 64, 77};
+
+	SECTION("no staging desired") {
+		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const copy_strategy strategy{copy_type::direct, copy_properties::none, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 1);
+		CHECK(copy_plan.front() == spec);
+	}
+
+	SECTION("no staging necessary") {
+		const copy_spec spec{device_id::d0, source_layout, device_id::d1, source_layout};
+		const auto copy_type = GENERATE(copy_type::direct, copy_type::staged);
+		const copy_strategy strategy{copy_type, copy_properties::none, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 1);
+		CHECK(copy_plan.front() == spec);
+	}
+
+	SECTION("staging required") {
+		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		CAPTURE(props);
+		const copy_strategy strategy{copy_type::staged, props, 0};
+		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_plan.size() == 2);
+		CHECK(copy_plan.front().properties == props);
+		CHECK(copy_plan.front().source_device == device_id::d0);
+		CHECK(copy_plan.front().source_layout == source_layout);
+		CHECK(copy_plan.front().target_device == device_id::d1);
+		CHECK(copy_plan.front().target_layout.unit_stride());
+		CHECK(copy_plan.front().target_layout.base == reinterpret_cast<std::byte*>(0x142));
+		CHECK(copy_plan.back().properties == props);
+		CHECK(copy_plan.back().source_device == device_id::d1);
+		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
+		CHECK(copy_plan.back().target_device == device_id::d1);
+		CHECK(copy_plan.back().target_layout == target_layout);
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+}
+
+TEST_CASE("staging copy specs at both ends", "[staging]") {
+	const auto stride = GENERATE(128, 512);
+	const auto offset = GENERATE(0, 31337);
+	const data_layout layout{nullptr, offset, 32, 16, stride};
+
+	const copy_spec spec{device_id::d0, layout, device_id::d1, layout};
+	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+	CAPTURE(props);
+	const copy_strategy strategy{copy_type::staged, props, 0};
+	const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
+	CHECK(copy_plan.size() == 3);
+	CHECK(copy_plan.front().properties == props);
+	CHECK(copy_plan.front().source_device == device_id::d0);
+	CHECK(copy_plan.front().source_layout == layout);
+	CHECK(copy_plan.front().target_device == device_id::d0);
+	CHECK(copy_plan.front().target_layout.unit_stride());
+	CHECK(copy_plan.front().target_layout.base == reinterpret_cast<std::byte*>(0x42));
+	CHECK(copy_plan[1].properties == props);
+	CHECK(copy_plan[1].source_device == device_id::d0);
+	CHECK(copy_plan[1].source_layout == copy_plan.front().target_layout);
+	CHECK(copy_plan[1].target_device == device_id::d1);
+	CHECK(copy_plan[1].target_layout.unit_stride());
+	CHECK(copy_plan[1].target_layout.base == reinterpret_cast<std::byte*>(0x142));
+	CHECK(copy_plan.back().properties == props);
+	CHECK(copy_plan.back().source_device == device_id::d1);
+	CHECK(copy_plan.back().source_layout == copy_plan[1].target_layout);
+	CHECK(copy_plan.back().target_device == device_id::d1);
+	CHECK(copy_plan.back().target_layout == layout);
+	CHECK(is_equivalent(copy_plan, spec));
+}
