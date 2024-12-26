@@ -8,11 +8,36 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")
 endif()
 
-find_package(AdaptiveCpp CONFIG)
-if(NOT AdaptiveCpp_FOUND)
-    find_package(IntelSYCL REQUIRED)
+find_package(SimSYCL CONFIG)
+if(NOT SimSYCL_FOUND)
+  find_package(AdaptiveCpp CONFIG)
+  if(NOT AdaptiveCpp_FOUND)
+      find_package(IntelSYCL REQUIRED)
+      message("Using Intel SYCL ${IntelSYCL_VERSION}")
+  else()
+    message("Using AdaptiveCpp ${AdaptiveCpp_VERSION}")
+  endif()
+else()
+  message("Using SimSYCL ${SimSYCL_VERSION}")
 endif()
 
-add_executable(transfer_test transfer_test.cpp)
-add_sycl_to_target(TARGET transfer_test SOURCES transfer_test.cpp)
-set_target_properties(transfer_test PROPERTIES CXX_STANDARD 20)
+add_executable(transfer_bench transfer_bench.cpp copylib.cpp)
+add_sycl_to_target(TARGET transfer_bench SOURCES transfer_bench.cpp copylib.cpp)
+set_target_properties(transfer_bench PROPERTIES CXX_STANDARD 20)
+
+# Unit Testing
+
+Include(FetchContent)
+
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.7.1 # or a later release
+)
+
+FetchContent_MakeAvailable(Catch2)
+
+add_executable(unit_tests unit_tests.cpp copylib.cpp)
+add_sycl_to_target(TARGET unit_tests SOURCES unit_tests.cpp copylib.cpp)
+target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain)
+set_target_properties(unit_tests PROPERTIES CXX_STANDARD 20)
