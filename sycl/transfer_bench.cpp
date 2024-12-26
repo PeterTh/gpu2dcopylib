@@ -1,8 +1,11 @@
-#include "copylib.hpp"
+#include "copylib.hpp" // IWYU pragma: keep
 
 #include <chrono>
 #include <cstdio>
+#include <iostream>
 #include <sched.h>
+
+using namespace copylib;
 
 int main(int argc, char** argv) {
 	constexpr int total_bytes = 1024 * 1024 * 1024; // 1 GB
@@ -23,7 +26,7 @@ int main(int argc, char** argv) {
 
 	cpu_set_t prior_mask;
 	CPU_ZERO(&prior_mask);
-	ensure(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
+	COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
 
 	// allocate queues and device buffers
 	int dev_id = 0;
@@ -31,18 +34,18 @@ int main(int argc, char** argv) {
 		auto& dev = g_devices.emplace_back(sycl::queue(device));
 		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.q);
 		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.q);
-		ensure(dev.dev_buffer != nullptr, "Failed to allocate device buffer");
-		ensure(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
+		COPYLIB_ENSURE(dev.dev_buffer != nullptr, "Failed to allocate device buffer");
+		COPYLIB_ENSURE(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
 
 		cpu_set_t mask_for_device;
 		CPU_ZERO(&mask_for_device);
 		CPU_SET(32 * dev_id, &mask_for_device); // TODO fix hardcoded NUMA <-> device mapping
-		ensure(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
+		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
 
 		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.q);
 		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.q);
-		ensure(dev.host_buffer != nullptr, "Failed to allocate host buffer");
-		ensure(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
+		COPYLIB_ENSURE(dev.host_buffer != nullptr, "Failed to allocate host buffer");
+		COPYLIB_ENSURE(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
 		// initialize data on host
 		for(int i = 0; i < total_bytes; i++) {
 			dev.host_buffer[i] = static_cast<std::byte>(i % 256);
@@ -51,7 +54,7 @@ int main(int argc, char** argv) {
 
 		dev_id++;
 	}
-	ensure(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &prior_mask) == 0, "Failed to reset CPU affinity");
+	COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &prior_mask) == 0, "Failed to reset CPU affinity");
 
 	// transfer data from host to device, individually, contiguously
 	for(int i = 0; i < total_runs; i++) {
