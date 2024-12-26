@@ -34,8 +34,6 @@ enum class device_id : int64_t {
 	d7 = 7,
 };
 
-using staging_buffer_provider = std::function<std::byte*(device_id, int64_t)>;
-
 // data layout used as the source or destination of a copy operation
 struct data_layout {
 	std::byte* base = nullptr;
@@ -51,6 +49,7 @@ struct data_layout {
 		COPYLIB_ENSURE(fragment >= 0 && fragment < fragment_count, "Invalid fragment index (#{} of {} total)", fragment, fragment_count);
 		return offset + fragment * stride;
 	}
+	constexpr int64_t end_offset() const { return fragment_offset(fragment_count - 1) + fragment_length; }
 
 	constexpr bool operator==(const data_layout& other) const = default;
 	constexpr bool operator!=(const data_layout& other) const = default;
@@ -114,8 +113,17 @@ bool is_valid(const data_layout& layout);
 // validate whether a given copy spec is sound
 bool is_valid(const copy_spec& plan);
 
+// validate whether a given copy plan is sound
+bool is_valid(const copy_plan& plan);
+
+// validate whether a given copy set is sound
+bool is_valid(const parallel_copy_set& set);
+
 // check whether a given copy plan implements a given copy specification
 bool is_equivalent(const copy_plan& plan, const copy_spec& spec);
+
+// check whetner the given copy set implements the given copy specification
+bool is_equivalent(const parallel_copy_set& plan, const copy_spec& spec);
 
 // sycl::event perform_1D_copy(const CopySpec& spec, const CopyStrategy& strategy) {
 // 	ensure(spec.source_layout.unit_stride() && spec.target_layout.unit_stride());
@@ -165,13 +173,21 @@ data_layout normalize(const data_layout&);
 // turn contiguous multi-fragment copy specs into single fragment copy specs
 copy_spec normalize(const copy_spec&);
 
-// apply chunking to `spec` if requested by `strategy`
+// apply given properties to the given copy spec
+copy_spec apply_properties(const copy_spec&, const copy_properties&);
+
+// apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec&, const copy_strategy&);
 
-// apply staging to `spec` if requested by `strategy`
+using staging_buffer_provider = std::function<std::byte*(device_id, int64_t)>;
+
+// apply staging to the given spec if requested by the strategy
 copy_plan apply_staging(const copy_spec&, const copy_strategy&, const staging_buffer_provider&);
 
-// apply staging to each copy spec in `copy_set` if requested by `strategy`
+// apply staging to each copy spec in the given parallel copy set if requested by the strategy
 parallel_copy_set apply_staging(const parallel_copy_set&, const copy_strategy&, const staging_buffer_provider&);
+
+// manifests the copy strategy on the given copy spec, applying chunking and staging as necessary
+parallel_copy_set manifest_strategy(const copy_spec&, const copy_strategy&, const staging_buffer_provider&);
 
 } // namespace copylib

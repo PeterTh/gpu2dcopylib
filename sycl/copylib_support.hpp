@@ -2,6 +2,8 @@
 
 #include "copylib_core.hpp"
 
+#include <format>
+
 // this file contains the implementation of exceedingly boring template functions which really shouldn't
 // be necessary at all in a modern programming language. Reflection when?
 
@@ -85,6 +87,26 @@ struct formatter<copylib::copy_strategy> : formatter<string> {
 		return formatter<string>::format(std::format("strategy({}({}), chunk:{})", p.type, p.properties, p.chunk_size), ctx);
 	}
 };
+template <>
+struct formatter<copylib::copy_plan> : formatter<string> {
+	auto format(const copylib::copy_plan& p, format_context& ctx) const {
+		ctx.advance_to(std::format_to(ctx.out(), "["));
+		for(const auto& spec : p) {
+			ctx.advance_to(std::formatter<copylib::copy_spec>{}.format(spec, ctx));
+		}
+		return std::format_to(ctx.out(), "]");
+	}
+};
+template <>
+struct formatter<copylib::parallel_copy_set> : formatter<string> {
+	auto format(const copylib::parallel_copy_set& p, format_context& ctx) const {
+		ctx.advance_to(std::format_to(ctx.out(), "{{"));
+		for(const auto& plan : p) {
+			ctx.advance_to(std::formatter<copylib::copy_plan>{}.format(plan, ctx));
+		}
+		return std::format_to(ctx.out(), "}}");
+	}
+};
 
 ostream& operator<<(ostream& os, const copylib::device_id& p);
 ostream& operator<<(ostream& os, const copylib::data_layout& p);
@@ -92,4 +114,5 @@ ostream& operator<<(ostream& os, const copylib::copy_properties& p);
 ostream& operator<<(ostream& os, const copylib::copy_spec& p);
 ostream& operator<<(ostream& os, const copylib::copy_type& p);
 ostream& operator<<(ostream& os, const copylib::copy_strategy& p);
+
 } // namespace std

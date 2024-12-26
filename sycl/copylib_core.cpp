@@ -1,5 +1,14 @@
 #include "copylib_core.hpp"
+
 #include "copylib.hpp" // IWYU pragma: keep
+#include "utils.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <unordered_set>
+
+#include <iostream>
 
 namespace copylib {
 
@@ -26,12 +35,73 @@ bool is_valid(const copy_spec& plan) {
 	       && plan.source_layout.total_bytes() == plan.target_layout.total_bytes();
 }
 
+bool is_valid(const copy_plan& plan) {
+	// each indivudal copy must be valid
+	if(!std::ranges::all_of(plan, [](const copy_spec& copy) { return is_valid(copy); })) { return false; }
+	// the copies must connect properly
+	return std::ranges::adjacent_find(plan, [](const copy_spec& a, const copy_spec& b) { return a.target_layout != b.source_layout; }) == plan.end();
+}
+
+bool is_valid(const parallel_copy_set& set) {
+	// each individual copy plan must be valid
+	return std::ranges::all_of(set, [](const copy_plan& plan) { return is_valid(plan); });
+}
+
 bool is_equivalent(const copy_plan& plan, const copy_spec& spec) {
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot compare to plan: {}", spec);
+	COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan, cannot compare to spec: {}", plan);
+
 	if(plan.empty()) { return false; }
+
 	const auto& first_spec = plan.front();
 	const auto& last_spec = plan.back();
 	return first_spec.source_device == spec.source_device && first_spec.source_layout == spec.source_layout && last_spec.target_device == spec.target_device
 	       && last_spec.target_layout == spec.target_layout;
+}
+
+bool is_equivalent(const parallel_copy_set& set, const copy_spec& spec) {
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot compare to set: {}", spec);
+	COPYLIB_ENSURE(is_valid(set), "Invalid copy set, cannot compare to spec: {}", set);
+
+	int64_t source_start = std::numeric_limits<int64_t>::max();
+	int64_t source_end = std::numeric_limits<int64_t>::min();
+	int64_t source_copied = 0;
+	int64_t target_start = std::numeric_limits<int64_t>::max();
+	int64_t target_end = std::numeric_limits<int64_t>::min();
+	int64_t target_copied = 0;
+
+	const auto source_fragment_size = spec.source_layout.fragment_length;
+	const auto source_stride = spec.source_layout.stride;
+	const auto target_fragment_size = spec.target_layout.fragment_length;
+	const auto target_stride = spec.target_layout.stride;
+
+	for(const auto& plan : set) {
+		COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan in set, cannot compare to spec: {}", plan);
+		const auto& first_spec = plan.front();
+		const auto& last_spec = plan.back();
+
+		if(first_spec.source_device != spec.source_device || first_spec.source_layout.base != spec.source_layout.base) { return false; }
+		if(last_spec.target_device != spec.target_device || last_spec.target_layout.base != spec.target_layout.base) { return false; }
+		if(!first_spec.source_layout.unit_stride()
+		    && (first_spec.source_layout.fragment_length != source_fragment_size || first_spec.source_layout.stride != source_stride)) {
+			return false;
+		}
+		if(!last_spec.target_layout.unit_stride()
+		    && (last_spec.target_layout.fragment_length != target_fragment_size || last_spec.target_layout.stride != target_stride)) {
+			return false;
+		}
+
+		source_start = std::min(source_start, first_spec.source_layout.offset);
+		source_end = std::max(source_end, first_spec.source_layout.end_offset());
+		source_copied += first_spec.source_layout.total_bytes();
+
+		target_start = std::min(target_start, last_spec.target_layout.offset);
+		target_end = std::max(target_end, last_spec.target_layout.end_offset());
+		target_copied += last_spec.target_layout.total_bytes();
+	}
+
+	return source_start == spec.source_layout.offset && source_end == spec.source_layout.end_offset() && source_copied == spec.source_layout.total_bytes()
+	       && target_start == spec.target_layout.offset && target_end == spec.target_layout.end_offset() && target_copied == spec.target_layout.total_bytes();
 }
 
 data_layout normalize(const data_layout& layout) {
@@ -43,6 +113,12 @@ data_layout normalize(const data_layout& layout) {
 copy_spec normalize(const copy_spec& spec) {
 	if(!spec.is_contiguous() || (spec.source_layout.fragment_count == 1 && spec.target_layout.fragment_count == 1)) { return spec; }
 	return {spec.source_device, normalize(spec.source_layout), spec.target_device, normalize(spec.target_layout), spec.properties};
+}
+
+copy_spec apply_properties(const copy_spec& spec, const copy_properties& props) {
+	copy_spec ret = spec;
+	ret.properties = props;
+	return ret;
 }
 
 // TODO: this function could probably be much less repetitive and smarter
@@ -169,13 +245,14 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
 	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
-	if(strategy.type == copy_type::direct) { return {spec}; }
+	const auto proper_spec = apply_properties(spec, strategy.properties);
+	if(strategy.type == copy_type::direct) { return {proper_spec}; }
 	if(strategy.type != copy_type::staged) {
 		COPYLIB_ERROR("Unknown copy strategy type: {}", strategy.type);
-		return {spec};
+		return {proper_spec};
 	}
 	// if we are looking at a contiguous copy, we don't need to stage, but we need to normalize the layouts
-	if(spec.is_contiguous()) { return {normalize(spec)}; }
+	if(spec.is_contiguous()) { return {normalize(proper_spec)}; }
 
 	// if the source is not unit stride, we need to stage the source
 	std::optional<copy_spec> source_staging_copy;
@@ -218,8 +295,17 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 }
 
 parallel_copy_set apply_staging(const parallel_copy_set& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-	COPYLIB_ERROR("NYI");
-	return {};
+	parallel_copy_set copies;
+	for(const auto& copy : spec) {
+		COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
+		copies.insert(apply_staging(copy.front(), strategy, staging_provider));
+	}
+	return copies;
+}
+
+parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
+	const auto chunked_copies = apply_chunking(spec, strategy);
+	return apply_staging(chunked_copies, strategy, staging_provider);
 }
 
 } // namespace copylib

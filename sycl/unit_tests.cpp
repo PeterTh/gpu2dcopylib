@@ -1,4 +1,5 @@
 #include "copylib.hpp" // IWYU pragma: keep
+#include "copylib_core.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
@@ -64,6 +65,65 @@ TEST_CASE("copy spec validation", "[validation]") {
 	CHECK(is_valid({device_id::d0, valid_layout, device_id::d1, {nullptr, 256, 512, 2, 512}}));  // fine!
 	CHECK(!is_valid({device_id::d0, valid_layout, device_id::d1, valid_layout, copy_properties::use_2D_copy | copy_properties::use_kernel})); // can't have both
 	CHECK(is_valid({device_id::d0, valid_layout, device_id::d1, valid_layout, copy_properties::use_2D_copy}));                                // fine!
+}
+
+TEST_CASE("copy plan validation", "[validation]") {
+	const data_layout valid_layout{nullptr, 0, 1024, 1, 1024};
+	const copy_spec valid_spec{device_id::d0, valid_layout, device_id::d1, valid_layout};
+	const copy_plan trivial_plan{valid_spec};
+	CHECK(is_valid(trivial_plan));
+	const copy_plan valid_plan{valid_spec, {device_id::d1, valid_layout, device_id::d2, valid_layout}};
+	CHECK(is_valid(valid_plan));
+	const copy_spec invalid_spec{device_id::d0, valid_layout, device_id::d1, {nullptr, 0, 1024, 1, 512}};
+	const copy_plan invalid_plan{valid_spec, invalid_spec};
+	CHECK(!is_valid(invalid_plan));
+	// check connectivity between steps
+	const copy_plan invalid_plan2{valid_spec, {device_id::d2, valid_layout, device_id::d2, valid_layout}}; // wrong device
+	CHECK(!is_valid(invalid_plan2));
+	const copy_plan invalid_plan3{valid_spec, {device_id::d1, {nullptr, 0, 512, 2}, device_id::d2, valid_layout}}; // wrong layout
+	CHECK(!is_valid(invalid_plan3));
+}
+
+TEST_CASE("copy set validation", "[validation]") {
+	const data_layout valid_layout{nullptr, 0, 1024, 1, 1024};
+	const copy_spec valid_spec{device_id::d0, valid_layout, device_id::d1, valid_layout};
+	const copy_plan valid_plan{valid_spec, {device_id::d1, valid_layout, device_id::d2, valid_layout}};
+	const parallel_copy_set valid_set{valid_plan};
+	CHECK(is_valid(valid_set));
+	const copy_plan invalid_plan{valid_spec, {device_id::d1, valid_layout, device_id::d2, {nullptr, 0, 1024, 1, 512}}};
+	const parallel_copy_set invalid_set{invalid_plan};
+	CHECK(!is_valid(invalid_set));
+}
+
+TEST_CASE("copy plan equivalence", "[equivalence]") {
+	const data_layout valid_layout{nullptr, 0, 1024, 1, 1024};
+	const copy_spec valid_spec{device_id::d0, valid_layout, device_id::d1, valid_layout};
+	const copy_plan trivial_plan{valid_spec};
+	CHECK(is_equivalent(trivial_plan, valid_spec));
+
+	// stupid but valid plan
+	const copy_plan valid_plan{
+	    valid_spec, {device_id::d1, valid_layout, device_id::d2, valid_layout}, {device_id::d2, valid_layout, device_id::d1, valid_layout}};
+	CHECK(is_equivalent(valid_plan, valid_spec));
+
+	// plan that doesn't go to the same device
+	const copy_plan invalid_plan{{device_id::d0, valid_layout, device_id::d2, valid_layout}};
+	CHECK(!is_equivalent(invalid_plan, valid_spec));
+}
+
+TEST_CASE("copy set equivalence", "[equivalence]") {
+	// set that fully covers the source and target
+	const data_layout valid_layout{nullptr, 0, 1024, 1, 1024};
+	const copy_spec full_spec{device_id::d0, valid_layout, device_id::d1, valid_layout};
+	const data_layout first_half{nullptr, 0, 512, 1, 512};
+	const data_layout second_half{nullptr, 512, 512, 1, 512};
+	const copy_spec first_half_spec{device_id::d0, first_half, device_id::d1, first_half};
+	const copy_spec second_half_spec{device_id::d0, second_half, device_id::d1, second_half};
+	const parallel_copy_set full_set{{first_half_spec}, {second_half_spec}};
+	CHECK(is_equivalent(full_set, full_spec));
+	CHECK(!is_equivalent(full_set, first_half_spec));
+	const parallel_copy_set first_half_set{{first_half_spec}};
+	CHECK(!is_equivalent(first_half_set, full_spec));
 }
 
 TEST_CASE("data layout normalization", "[normalization]") {
@@ -353,4 +413,49 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 	CHECK(copy_plan.back().target_device == device_id::d1);
 	CHECK(copy_plan.back().target_layout == layout);
 	CHECK(is_equivalent(copy_plan, spec));
+}
+
+std::byte* testptr(int64_t val) { return reinterpret_cast<std::byte*>(val); }
+
+TEST_CASE("implementing copy strategies", "[copy]") {
+	const data_layout source_layout{testptr(0x10000), 0x42, 16, 1024, 4096};
+	const data_layout target_layout{testptr(0x20000), 0x0, 32, 512, 4096};
+
+	const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+
+	SECTION("direct copy, no chunking") {
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_strategy strategy{copy_type::direct, props, 0};
+		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(copy_set.size() == 1);
+		CHECK(copy_set.cbegin()->size() == 1);
+		auto gen_copy = copy_set.cbegin()->front();
+		CHECK(gen_copy.source_device == device_id::d0);
+		CHECK(gen_copy.source_layout == source_layout);
+		CHECK(gen_copy.target_device == device_id::d1);
+		CHECK(gen_copy.target_layout == target_layout);
+		CHECK(gen_copy.properties == props);
+		CHECK(is_equivalent(copy_set, spec));
+	}
+
+	SECTION("direct copy, with chunking") {
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_strategy strategy{copy_type::direct, props, 512};
+		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(is_equivalent(copy_set, spec));
+	}
+
+	SECTION("staged copy, no chunking") {
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_strategy strategy{copy_type::staged, props, 0};
+		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(is_equivalent(copy_set, spec));
+	}
+
+	SECTION("staged copy, with chunking") {
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_strategy strategy{copy_type::staged, props, 512};
+		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(is_equivalent(copy_set, spec));
+	}
 }
