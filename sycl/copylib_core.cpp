@@ -8,8 +8,6 @@
 #include <limits>
 #include <unordered_set>
 
-#include <iostream>
-
 namespace copylib {
 
 bool is_valid(const data_layout& layout) { //

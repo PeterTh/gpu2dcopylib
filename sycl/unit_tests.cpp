@@ -419,14 +419,26 @@ std::byte* testptr(int64_t val) { return reinterpret_cast<std::byte*>(val); }
 
 TEST_CASE("implementing copy strategies", "[copy]") {
 	const data_layout source_layout{testptr(0x10000), 0x42, 16, 1024, 4096};
-	const data_layout target_layout{testptr(0x20000), 0x0, 32, 512, 4096};
+	const data_layout target_layout{testptr(0x20000), 0x0, 32, 512, 3084};
 
 	const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
 
+	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+
+	const auto verify_properties = [&props](const parallel_copy_set& copy_set) {
+		for(const auto& plan : copy_set) {
+			for(const auto& copy : plan) {
+				if(copy.properties != props) return false;
+			}
+		}
+		return true;
+	};
+
 	SECTION("direct copy, no chunking") {
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 		const copy_strategy strategy{copy_type::direct, props, 0};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(is_equivalent(copy_set, spec));
+		CHECK(verify_properties(copy_set));
 		CHECK(copy_set.size() == 1);
 		CHECK(copy_set.cbegin()->size() == 1);
 		auto gen_copy = copy_set.cbegin()->front();
@@ -434,28 +446,41 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 		CHECK(gen_copy.source_layout == source_layout);
 		CHECK(gen_copy.target_device == device_id::d1);
 		CHECK(gen_copy.target_layout == target_layout);
-		CHECK(gen_copy.properties == props);
-		CHECK(is_equivalent(copy_set, spec));
 	}
 
 	SECTION("direct copy, with chunking") {
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 		const copy_strategy strategy{copy_type::direct, props, 512};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
+		CHECK(verify_properties(copy_set));
+		for(const auto& plan : copy_set) {
+			for(const auto& copy : plan) {
+				CHECK(copy.properties == props);
+			}
+		}
 	}
 
 	SECTION("staged copy, no chunking") {
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 		const copy_strategy strategy{copy_type::staged, props, 0};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
+		CHECK(copy_set.size() == 1);
+		CHECK(verify_properties(copy_set));
 	}
 
 	SECTION("staged copy, with chunking") {
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 		const copy_strategy strategy{copy_type::staged, props, 512};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
+		CHECK(copy_set.size() == 16 * 1024 / 512);
+		CHECK(verify_properties(copy_set));
+	}
+
+	SECTION("staged copy, with chunking, remainder") {
+		const copy_strategy strategy{copy_type::staged, props, 177};
+		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
+		CHECK(is_equivalent(copy_set, spec));
+		CHECK(copy_set.size() == (16 * 1024) / ((177 / 32) * 32) + 1);
+		CHECK(verify_properties(copy_set));
 	}
 }
