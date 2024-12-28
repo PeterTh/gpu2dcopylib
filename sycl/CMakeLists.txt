@@ -21,8 +21,8 @@ else()
   message("Using SimSYCL ${SimSYCL_VERSION}")
 endif()
 
-add_library(copylib copylib_core.cpp copylib_support.cpp utils.cpp)
-add_sycl_to_target(TARGET copylib SOURCES copylib_core.cpp)
+add_library(copylib copylib_core.cpp copylib_backend.cpp copylib_support.cpp utils.cpp)
+add_sycl_to_target(TARGET copylib SOURCES copylib_core.cpp copylib_backend.cpp)
 set_target_properties(copylib PROPERTIES CXX_STANDARD 20)
 
 add_executable(transfer_bench transfer_bench.cpp)

@@ -10,17 +10,19 @@
 namespace copylib {
 
 struct device {
-	sycl::queue q;
+	sycl::queue queue;
 	std::byte* dev_buffer = nullptr;
 	std::byte* staging_buffer = nullptr;
 	std::byte* host_buffer = nullptr;
 	std::byte* host_staging_buffer = nullptr;
 	std::chrono::duration<double> linear_h_to_d_time{0};
 	std::chrono::duration<double> linear_d_to_h_time{0};
+
+	~device();
 };
 
-using devices = std::vector<device>;
-inline devices g_devices;
+using device_list = std::vector<device>;
+inline device_list g_devices;
 
 enum class device_id : int64_t {
 	host = -1,
@@ -36,7 +38,7 @@ enum class device_id : int64_t {
 
 // data layout used as the source or destination of a copy operation
 struct data_layout {
-	std::byte* base = nullptr;
+	intptr_t base = 0;
 	int64_t offset = 0;
 	int64_t fragment_length = 0;
 	int64_t fragment_count = 1;
@@ -44,12 +46,21 @@ struct data_layout {
 
 	constexpr int64_t total_bytes() const { return fragment_count * fragment_length; }
 	constexpr int64_t total_extent() const { return offset + fragment_count * stride; }
+	constexpr int64_t effective_stride() const { return stride == 0 ? fragment_length : stride; }
 	constexpr bool unit_stride() const { return fragment_length == stride || (fragment_count == 1 && stride == 0); }
 	constexpr int64_t fragment_offset(int64_t fragment) const {
 		COPYLIB_ENSURE(fragment >= 0 && fragment < fragment_count, "Invalid fragment index (#{} of {} total)", fragment, fragment_count);
 		return offset + fragment * stride;
 	}
 	constexpr int64_t end_offset() const { return fragment_offset(fragment_count - 1) + fragment_length; }
+
+	static constexpr intptr_t min_staging_id = -100;
+	constexpr bool is_unplaced_staging() const { return base < 0 && base > min_staging_id; }
+
+	std::byte* base_ptr() const {
+		COPYLIB_ENSURE(base > 0, "Invalid base pointer (uninitialized staging?): {}", base);
+		return reinterpret_cast<std::byte*>(base);
+	}
 
 	constexpr bool operator==(const data_layout& other) const = default;
 	constexpr bool operator!=(const data_layout& other) const = default;
@@ -77,16 +88,6 @@ struct copy_spec {
 	constexpr bool operator==(const copy_spec& other) const = default;
 	constexpr bool operator!=(const copy_spec& other) const = default;
 };
-
-// get a device queue for the given copy specification
-// sycl::queue& get_queue(const CopySpec& spec) {
-// 	if(spec.source_device != DeviceID::host) {
-// 		return g_devices[static_cast<int>(spec.source_device)].q;
-// 	} else if(spec.target_device != DeviceID::host) {
-// 		return g_devices[static_cast<int>(spec.target_device)].q;
-// 	}
-// 	error("Invalid copy specification");
-// }
 
 // a copy plan is a list of one or more copy specifications which need to be enacted subsequently to implement one semantic copy operation
 using copy_plan = std::vector<copy_spec>;
@@ -125,48 +126,6 @@ bool is_equivalent(const copy_plan& plan, const copy_spec& spec);
 // check whetner the given copy set implements the given copy specification
 bool is_equivalent(const parallel_copy_set& plan, const copy_spec& spec);
 
-// sycl::event perform_1D_copy(const CopySpec& spec, const CopyStrategy& strategy) {
-// 	ensure(spec.source_layout.unit_stride() && spec.target_layout.unit_stride());
-// 	ensure(spec.source_layout.total_bytes() == spec.target_layout.total_bytes());
-// 	if(strategy.chunk_size == 0) {
-// 		// perform a single copy operation
-// 		auto& q = get_queue(spec);
-// 		const auto src = spec.source_layout.base + spec.source_layout.offset;
-// 		const auto tgt = spec.target_layout.base + spec.target_layout.offset;
-// 		return q.copy(src, tgt, spec.source_layout.total_bytes());
-// 	} else {
-// 		// split the copy into chunks
-// 		const auto total_bytes = spec.source_layout.total_bytes();
-// 		const auto num_chunks = (total_bytes + strategy.chunk_size - 1) / strategy.chunk_size;
-// 		sycl::event ev;
-// 		for(int64_t i = 0; i < num_chunks; i++) {
-// 			const auto chunk_offset = i * strategy.chunk_size;
-// 			const auto chunk_start_fragment = chunk_offset / spec.source_layout.fragment_length;
-// 			auto& q = get_queue(spec);
-// 			ev = q.copy(spec.target_layout.base + target_offset, spec.source_layout.base + source_offset, chunk_size);
-// 		}
-// 		return ev;
-// 	}
-// }
-
-// sycl::event perform_2D_copy(const CopySpec& spec, const CopyStrategy& strategy) {
-// 	if(strategy.type == CopyType::direct) {
-// #if SYCL_EXT_ONEAPI_MEMCPY2D >= 1
-// #endif
-// 	} else {
-// 		// perform a staged copy
-// 		error("Staged copy not implemented");
-// 	}
-// }
-
-// sycl::event perform_copy(const CopySpec& spec, const CopyStrategy& strategy) {
-// 	if(spec.source_layout.unit_stride() && spec.target_layout.unit_stride()) {
-// 		return perform_1D_copy(spec, strategy);
-// 	} else {
-// 		return perform_2D_copy(spec, strategy);
-// 	}
-// }
-
 // turn unit stride (contiguous) multi-fragment layouts into single fragment layouts
 data_layout normalize(const data_layout&);
 
@@ -179,7 +138,7 @@ copy_spec apply_properties(const copy_spec&, const copy_properties&);
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec&, const copy_strategy&);
 
-using staging_buffer_provider = std::function<std::byte*(device_id, int64_t)>;
+using staging_buffer_provider = std::function<intptr_t(device_id, int64_t)>;
 
 // apply staging to the given spec if requested by the strategy
 copy_plan apply_staging(const copy_spec&, const copy_strategy&, const staging_buffer_provider&);

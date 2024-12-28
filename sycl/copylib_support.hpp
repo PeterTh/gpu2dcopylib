@@ -49,8 +49,8 @@ struct formatter<copylib::device_id> : formatter<string> {
 template <>
 struct formatter<copylib::data_layout> : formatter<string> {
 	auto format(const copylib::data_layout& p, format_context& ctx) const {
-		return formatter<string>::format(
-		    std::format("{{{}+{}, [{} * {}, {}]}}", static_cast<void*>(p.base), p.offset, p.fragment_length, p.fragment_count, p.stride), ctx);
+		std::string addr = (p.is_unplaced_staging()) ? std::format("S{}", p.base) : std::format("{:p}", reinterpret_cast<void*>(p.base));
+		return formatter<string>::format(std::format("{{{}+{}, [{} * {}, {}]}}", addr, p.offset, p.fragment_length, p.fragment_count, p.stride), ctx);
 	}
 };
 template <>

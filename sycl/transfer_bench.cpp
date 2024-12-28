@@ -32,8 +32,8 @@ int main(int argc, char** argv) {
 	int dev_id = 0;
 	for(const auto& device : gpu_devices) {
 		auto& dev = g_devices.emplace_back(sycl::queue(device));
-		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.q);
-		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.q);
+		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
+		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
 		COPYLIB_ENSURE(dev.dev_buffer != nullptr, "Failed to allocate device buffer");
 		COPYLIB_ENSURE(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
 
@@ -42,8 +42,8 @@ int main(int argc, char** argv) {
 		CPU_SET(32 * dev_id, &mask_for_device); // TODO fix hardcoded NUMA <-> device mapping
 		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
 
-		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.q);
-		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.q);
+		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
+		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
 		COPYLIB_ENSURE(dev.host_buffer != nullptr, "Failed to allocate host buffer");
 		COPYLIB_ENSURE(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
 		// initialize data on host
@@ -60,18 +60,18 @@ int main(int argc, char** argv) {
 	for(int i = 0; i < total_runs; i++) {
 		for(auto& dev : g_devices) {
 			{
-				dev.q.wait();
+				dev.queue.wait();
 				const auto start = std::chrono::high_resolution_clock::now();
-				auto ev = dev.q.memcpy(dev.dev_buffer, dev.host_buffer, total_bytes);
+				auto ev = dev.queue.memcpy(dev.dev_buffer, dev.host_buffer, total_bytes);
 				ev.wait();
 				const auto end = std::chrono::high_resolution_clock::now();
 				if(i >= num_warmups) { dev.linear_h_to_d_time += end - start; }
 			}
 
 			{
-				dev.q.wait();
+				dev.queue.wait();
 				const auto start = std::chrono::high_resolution_clock::now();
-				auto ev = dev.q.memcpy(dev.host_buffer, dev.dev_buffer, total_bytes);
+				auto ev = dev.queue.memcpy(dev.host_buffer, dev.dev_buffer, total_bytes);
 				ev.wait();
 				const auto end = std::chrono::high_resolution_clock::now();
 				if(i >= num_warmups) { dev.linear_d_to_h_time += end - start; }
@@ -95,18 +95,18 @@ int main(int argc, char** argv) {
 				if(source_idx == target_idx) { continue; }
 
 				{
-					source.q.wait();
+					source.queue.wait();
 					const auto start = std::chrono::high_resolution_clock::now();
-					auto ev = source.q.memcpy(target.dev_buffer, source.dev_buffer, total_bytes);
+					auto ev = source.queue.memcpy(target.dev_buffer, source.dev_buffer, total_bytes);
 					ev.wait();
 					const auto end = std::chrono::high_resolution_clock::now();
 					if(i >= num_warmups) { device_pair_times[source_idx][target_idx].first += end - start; }
 				}
 
 				{
-					source.q.wait();
+					source.queue.wait();
 					const auto start = std::chrono::high_resolution_clock::now();
-					auto ev = source.q.memcpy(source.dev_buffer, target.dev_buffer, total_bytes);
+					auto ev = source.queue.memcpy(source.dev_buffer, target.dev_buffer, total_bytes);
 					ev.wait();
 					const auto end = std::chrono::high_resolution_clock::now();
 					if(i >= num_warmups) { device_pair_times[source_idx][target_idx].second += end - start; }

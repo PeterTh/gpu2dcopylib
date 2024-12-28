@@ -28,7 +28,7 @@ void print_to_cerr(std::string_view); // just to avoid including <iostream>
 		const auto loc = std::source_location::current();                                                                                                      \
 		if(!(_expr)) {                                                                                                                                         \
 			copylib::utils::print_to_cerr(                                                                                                                     \
-			    std::format("Error: !{}\nIn {}:{} : {}\n{}", #_expr, loc.file_name(), loc.line(), loc.function_name(), std::format(__VA_ARGS__)));             \
+			    std::format("Error: !{}\nIn {}:{} : {}\n=> {}", #_expr, loc.file_name(), loc.line(), loc.function_name(), std::format(__VA_ARGS__)));          \
 			assert(false);                                                                                                                                     \
 			std::exit(1);                                                                                                                                      \
 			__builtin_unreachable();                                                                                                                           \

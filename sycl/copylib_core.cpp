@@ -11,6 +11,7 @@
 namespace copylib {
 
 bool is_valid(const data_layout& layout) { //
+	if(layout.base < data_layout::min_staging_id) { return false; }
 	return layout.fragment_length > 0 && layout.fragment_count > 0
 	       && (layout.stride >= layout.fragment_length ||
 	           // simple contiguous layout (allowed for 1D copies)
