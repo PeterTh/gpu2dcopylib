@@ -318,7 +318,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 
 	SECTION("staging required") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
 		const copy_strategy strategy{copy_type::staged, props, 0};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
@@ -361,7 +361,7 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 
 	SECTION("staging required") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
-		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
 		const copy_strategy strategy{copy_type::staged, props, 0};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
@@ -396,13 +396,13 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 	CHECK(copy_plan.front().source_device == device_id::d0);
 	CHECK(copy_plan.front().source_layout == layout);
 	CHECK(copy_plan.front().target_device == device_id::d0);
-	CHECK(copy_plan.front().target_layout.unit_stride());
+	if(!(props & copy_properties::use_2D_copy)) CHECK(copy_plan.front().target_layout.unit_stride());
 	CHECK(copy_plan.front().target_layout.base == 0x42);
 	CHECK(copy_plan[1].properties == props);
 	CHECK(copy_plan[1].source_device == device_id::d0);
 	CHECK(copy_plan[1].source_layout == copy_plan.front().target_layout);
 	CHECK(copy_plan[1].target_device == device_id::d1);
-	CHECK(copy_plan[1].target_layout.unit_stride());
+	if(!(props & copy_properties::use_2D_copy)) CHECK(copy_plan[1].target_layout.unit_stride());
 	CHECK(copy_plan[1].target_layout.base == 0x142);
 	CHECK(copy_plan.back().properties == props);
 	CHECK(copy_plan.back().source_device == device_id::d1);
@@ -414,11 +414,15 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 
 TEST_CASE("implementing copy strategies", "[copy]") {
 	const data_layout source_layout{0x10000, 0x42, 16, 1024, 4096};
-	const data_layout target_layout{0x20000, 0x0, 32, 512, 3084};
+	const int frag_size_multiplier = GENERATE(1, 2);
+	CAPTURE(frag_size_multiplier);
+	const data_layout target_layout{0x20000, 0x0, 16 * frag_size_multiplier, 1024 / frag_size_multiplier, 3084};
 
 	const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
 
-	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
+	const copy_properties props = frag_size_multiplier == 1 ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                                        : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	CAPTURE(props);
 
 	const auto verify_properties = [&props](const parallel_copy_set& copy_set) {
 		for(const auto& plan : copy_set) {
@@ -475,7 +479,8 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 		const copy_strategy strategy{copy_type::staged, props, 177};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
-		CHECK(copy_set.size() == (16 * 1024) / ((177 / 32) * 32) + 1);
+		const auto target_frag_length = target_layout.fragment_length;
+		CHECK(static_cast<int64_t>(copy_set.size()) == (16 * 1024) / ((177 / target_frag_length) * target_frag_length) + 1);
 		CHECK(verify_properties(copy_set));
 	}
 }
@@ -507,7 +512,7 @@ bool validate_contents(executor& exec, device_id did, intptr_t buffer, int64_t o
 		const uint32_t expected = start_value + static_cast<uint32_t>(idx[0]);
 		const uint32_t valid = ptr[idx[0]] == expected;
 		sycl::atomic_ref<uint32_t, sycl::memory_order::relaxed, sycl::memory_scope::device>(*valid_ptr).fetch_and(valid);
-		if(!valid) { printf("Mismatch at index %ld: expected %u, got %u\n", idx[0], expected, ptr[idx[0]]); }
+		if(!valid) { COPYLIB_KERNEL_DEBUG_PRINTF("Mismatch at index %ld: expected %u, got %u\n", idx[0], expected, ptr[idx[0]]); }
 	});
 	queue.wait_and_throw();
 	bool valid = *valid_ptr;
@@ -516,7 +521,7 @@ bool validate_contents(executor& exec, device_id did, intptr_t buffer, int64_t o
 }
 
 TEST_CASE("basic copies can be executed", "[executor]") {
-	const int64_t buffer_size = 76; // GENERATE(1024, 76);
+	const int64_t buffer_size = GENERATE(1024, 76);
 	CAPTURE(buffer_size);
 	executor exec(buffer_size * 2);
 
@@ -577,8 +582,9 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 
 	fill_uniform(exec, device_id::d0, tgt_buffer, buffer_size, 66);
 
-	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
-	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	const copy_properties props = (is_2d_copy_available() && target_frag_factor == 1.0)
+	                                  ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                  : GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(props);
 
 	const copy_spec spec{device_id::d0, source_layout, device_id::d0, target_layout, props};
@@ -611,12 +617,15 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 				const uint32_t expected = 42 + source_frag_idx * 100 + source_frag_offset / sizeof(uint32_t);
 				const uint32_t valid = ptr[id] == expected;
 				sycl::atomic_ref<uint32_t, sycl::memory_order::relaxed, sycl::memory_scope::device>(*valid_ptr).fetch_and(valid);
-				if(!valid) { printf("Mismatch at index %ld (byte#%3ld): expected %u, got %u\n", id, elem_idx_byte, expected, ptr[idx[0]]); }
+				if(!valid) {
+					COPYLIB_KERNEL_DEBUG_PRINTF("Mismatch at index %ld (byte#%3ld): expected %u, got %u\n", id, elem_idx_byte, expected, ptr[idx[0]]);
+				}
 			} else {
+				// if it is not in the layout, it must be unchanged from the initial fill
 				const uint32_t expected = (66 << 24 | 66 << 16 | 66 << 8 | 66);
 				const uint32_t valid = ptr[id] == expected;
 				sycl::atomic_ref<uint32_t, sycl::memory_order::relaxed, sycl::memory_scope::device>(*valid_ptr).fetch_and(valid);
-				if(!valid) { printf("Mismatch at index %ld: expected %u, got %u\n", id, expected, ptr[idx[0]]); }
+				if(!valid) { COPYLIB_KERNEL_DEBUG_PRINTF("Mismatch at index %ld: expected %u, got %u\n", id, expected, ptr[idx[0]]); }
 			}
 		});
 		queue.wait_and_throw();

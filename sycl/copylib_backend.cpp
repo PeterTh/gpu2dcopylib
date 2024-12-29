@@ -117,8 +117,11 @@ void execute_copy(executor& exec, const copy_spec& spec) {
 #if SYCL_EXT_ONEAPI_MEMCPY2D > 0
 		const auto dst_ptr = spec.target_layout.base_ptr() + spec.target_layout.offset;
 		const auto src_ptr = spec.source_layout.base_ptr() + spec.source_layout.offset;
-		queue.ext_oneapi_memcpy2d(
-		    dst_ptr, spec.target_layout.stride, src_ptr, spec.source_layout.stride, spec.source_layout.fragment_length, spec.source_layout.fragment_count);
+		const auto effective_dst_stride = spec.target_layout.effective_stride();
+		const auto effective_src_stride = spec.source_layout.effective_stride();
+		const auto width = spec.source_layout.fragment_length;
+		const auto count = spec.source_layout.fragment_count;
+		queue.ext_oneapi_memcpy2d(dst_ptr, effective_dst_stride, src_ptr, effective_src_stride, width, count);
 #else
 		COPYLIB_ERROR("2D copy requested, but not supported by the backend");
 #endif // SYCL_EXT_ONEAPI_MEMCPY2D

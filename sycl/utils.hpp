@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert> // IWYU pragma: keep (used in macro)
+#include <format>  // IWYU pragma: keep (for std::format used in macro)
 #include <functional>
 #include <memory>          // IWYU pragma: keep (for std::hash)
 #include <source_location> // IWYU pragma: keep (used in macro)
@@ -37,3 +38,11 @@ void print_to_cerr(std::string_view); // just to avoid including <iostream>
 
 
 #define COPYLIB_ERROR(...) COPYLIB_ENSURE(false, __VA_ARGS__)
+
+// Intel SYCL does not allow variadic function calls in device code
+// this is generally just debug/informative output, so we can just disable it
+#ifdef __INTEL_LLVM_COMPILER
+#define COPYLIB_KERNEL_DEBUG_PRINTF(...)
+#else
+#define COPYLIB_KERNEL_DEBUG_PRINTF(...) printf(__VA_ARGS__)
+#endif

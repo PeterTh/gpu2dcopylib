@@ -93,6 +93,7 @@ struct formatter<copylib::copy_plan> : formatter<string> {
 		ctx.advance_to(std::format_to(ctx.out(), "["));
 		for(const auto& spec : p) {
 			ctx.advance_to(std::formatter<copylib::copy_spec>{}.format(spec, ctx));
+			ctx.advance_to(std::format_to(ctx.out(), ", "));
 		}
 		return std::format_to(ctx.out(), "]");
 	}
@@ -103,6 +104,7 @@ struct formatter<copylib::parallel_copy_set> : formatter<string> {
 		ctx.advance_to(std::format_to(ctx.out(), "{{"));
 		for(const auto& plan : p) {
 			ctx.advance_to(std::formatter<copylib::copy_plan>{}.format(plan, ctx));
+			ctx.advance_to(std::format_to(ctx.out(), ", "));
 		}
 		return std::format_to(ctx.out(), "}}");
 	}

@@ -29,6 +29,8 @@ bool is_valid(const copy_spec& plan) {
 	}
 	// we can't use both a kernel and a native 2D copy
 	if(plan.properties & copy_properties::use_2D_copy && plan.properties & copy_properties::use_kernel) { return false; }
+	// for native 2D copies the fragment lengths must match
+	if(plan.properties & copy_properties::use_2D_copy && plan.source_layout.fragment_length != plan.target_layout.fragment_length) { return false; }
 	// the layouts must be valid and compatible
 	return is_valid(plan.source_layout) && is_valid(plan.target_layout) //
 	       && plan.source_layout.total_bytes() == plan.target_layout.total_bytes();
@@ -242,6 +244,19 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 	COPYLIB_ERROR("Unexpected copy layout when chunking: {}", spec);
 }
 
+namespace {
+	data_layout create_2D_staging_layout(const copy_strategy& strategy, const data_layout& layout, const data_layout& spec) {
+		// for native 2D copies, we need to have individual fragments
+		auto ret = layout;
+		if(strategy.properties & copy_properties::use_2D_copy) {
+			ret.fragment_length = spec.fragment_length;
+			ret.fragment_count = spec.fragment_count;
+			ret.stride = layout.fragment_length;
+		}
+		return ret;
+	}
+} // namespace
+
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
 	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
 	const auto proper_spec = apply_properties(spec, strategy.properties);
@@ -257,7 +272,8 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	std::optional<copy_spec> source_staging_copy;
 	if(!spec.source_layout.unit_stride()) {
 		const auto source_staging_buffer = staging_provider(spec.source_device, spec.source_layout.total_bytes());
-		const data_layout staged_source_layout{source_staging_buffer, 0, spec.source_layout.total_bytes(), 1, spec.source_layout.total_bytes()};
+		const data_layout staged_source_layout = create_2D_staging_layout(
+		    strategy, {source_staging_buffer, 0, spec.source_layout.total_bytes(), 1, spec.source_layout.total_bytes()}, spec.source_layout);
 		source_staging_copy.emplace(spec.source_device, spec.source_layout, spec.source_device, staged_source_layout, strategy.properties);
 		COPYLIB_ENSURE(is_valid(source_staging_copy.value()), "Created invalid source staging copy {} from {}", source_staging_copy.value(), spec);
 	}
@@ -266,7 +282,8 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	std::optional<copy_spec> target_unstaging_copy;
 	if(!spec.target_layout.unit_stride()) {
 		const auto target_staging_buffer = staging_provider(spec.target_device, spec.target_layout.total_bytes());
-		const data_layout staged_target_layout{target_staging_buffer, 0, spec.target_layout.total_bytes(), 1, spec.target_layout.total_bytes()};
+		const data_layout staged_target_layout = create_2D_staging_layout(
+		    strategy, {target_staging_buffer, 0, spec.target_layout.total_bytes(), 1, spec.target_layout.total_bytes()}, spec.target_layout);
 		target_unstaging_copy.emplace(spec.target_device, staged_target_layout, spec.target_device, spec.target_layout, strategy.properties);
 		COPYLIB_ENSURE(is_valid(target_unstaging_copy.value()), "Created invalid target unstaging copy {} from {}", target_unstaging_copy.value(), spec);
 	}
