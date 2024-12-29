@@ -2,7 +2,9 @@
 
 #include "copylib_support.hpp" // IWYU pragma: keep - this is needed for formatting output, IWYU is dumb
 
+#ifdef SIMSYCL_VERSION
 #include <simsycl/system.hh>
+#endif
 
 namespace copylib {
 
