@@ -140,6 +140,18 @@ parallel_copy_set apply_chunking(const copy_spec&, const copy_strategy&);
 
 using staging_buffer_provider = std::function<intptr_t(device_id, int64_t)>;
 
+class basic_staging_provider {
+  public:
+	intptr_t operator()(device_id id, int64_t size) {
+		COPYLIB_ENSURE(size > 0, "Invalid staging buffer size: {}", size);
+		COPYLIB_ENSURE(next_staging_id > data_layout::min_staging_id, "Staging buffer overflow");
+		return next_staging_id--;
+	}
+
+  private:
+	int64_t next_staging_id = -1;
+};
+
 // apply staging to the given spec if requested by the strategy
 copy_plan apply_staging(const copy_spec&, const copy_strategy&, const staging_buffer_provider&);
 

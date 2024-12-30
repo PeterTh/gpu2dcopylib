@@ -8,7 +8,15 @@
 
 namespace copylib {
 
-executor::executor(int64_t buffer_size) {
+bool is_2d_copy_available() {
+#if SYCL_EXT_ONEAPI_MEMCPY2D > 0
+	return true;
+#else
+	return false;
+#endif // SYCL_EXT_ONEAPI_MEMCPY2D
+}
+
+executor::executor(int64_t buffer_size) : buffer_size(buffer_size) {
 #ifdef SIMSYCL_VERSION
 	auto sys_cfg = simsycl::get_default_system_config();
 	sys_cfg.devices.emplace("gpu2", sys_cfg.devices.cbegin()->second);
@@ -71,6 +79,16 @@ sycl::queue& executor::get_queue(device_id id) {
 std::byte* executor::get_buffer(device_id id) {
 	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
 	return devices[static_cast<int>(id)].dev_buffer;
+}
+
+std::byte* executor::get_staging_buffer(device_id id) {
+	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
+	return devices[static_cast<int>(id)].staging_buffer;
+}
+
+std::byte* executor::get_host_buffer(device_id id) {
+	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
+	return devices[static_cast<int>(id)].host_buffer;
 }
 
 template <typename T>
@@ -143,12 +161,49 @@ void execute_copy(executor& exec, const copy_spec& spec) {
 	}
 }
 
-bool is_2d_copy_available() {
-#if SYCL_EXT_ONEAPI_MEMCPY2D > 0
-	return true;
-#else
-	return false;
-#endif // SYCL_EXT_ONEAPI_MEMCPY2D
+class staging_fulfiller {
+  public:
+	staging_fulfiller(executor& exec) : exec(exec) {}
+
+	void fulfill(data_layout& layout, device_id did) {
+		if(layout.is_unplaced_staging()) {
+			const auto staging_idx = -layout.base - 1;
+			if(staging_buffers[staging_idx].buffer == nullptr) {
+				staging_buffers[staging_idx].size = layout.total_bytes();
+				staging_buffers[staging_idx].buffer = exec.get_staging_buffer(did) + current_staging_offset;
+				current_staging_offset += staging_buffers[staging_idx].size + (staging_buffers[staging_idx].size % staging_alignment);
+				COPYLIB_ENSURE(current_staging_offset <= exec.get_buffer_size(), "Staging buffer overflow");
+			} else {
+				COPYLIB_ENSURE(staging_buffers[staging_idx].size == layout.total_bytes(), "Staging buffer size mismatch");
+			}
+			layout.base = reinterpret_cast<intptr_t>(staging_buffers[staging_idx].buffer);
+		}
+	}
+
+	void fulfill(copy_spec& spec) {
+		fulfill(spec.source_layout, spec.source_device);
+		fulfill(spec.target_layout, spec.target_device);
+	}
+
+  private:
+	executor& exec;
+	int64_t current_staging_offset = 0;
+	static constexpr int64_t staging_alignment = 128;
+
+	struct staging_info {
+		int64_t size = 0;
+		std::byte* buffer = nullptr;
+	};
+	std::vector<staging_info> staging_buffers = std::vector<staging_info>(-data_layout::min_staging_id);
+};
+
+void execute_copy(executor& exec, const copy_plan& plan) {
+	staging_fulfiller fulfiller(exec);
+	for(auto spec : plan) {
+		fulfiller.fulfill(spec);
+		execute_copy(exec, spec);
+		exec.get_queue(spec.source_device).wait_and_throw();
+	}
 }
 
 } // namespace copylib
