@@ -91,9 +91,10 @@ template <>
 struct formatter<copylib::copy_plan> : formatter<string> {
 	auto format(const copylib::copy_plan& p, format_context& ctx) const {
 		ctx.advance_to(std::format_to(ctx.out(), "["));
-		for(const auto& spec : p) {
+		for(size_t i = 0; i < p.size(); i++) {
+			const auto& spec = p[i];
 			ctx.advance_to(std::formatter<copylib::copy_spec>{}.format(spec, ctx));
-			ctx.advance_to(std::format_to(ctx.out(), ", "));
+			if(i < p.size() - 1) ctx.advance_to(std::format_to(ctx.out(), ", "));
 		}
 		return std::format_to(ctx.out(), "]");
 	}
@@ -102,9 +103,11 @@ template <>
 struct formatter<copylib::parallel_copy_set> : formatter<string> {
 	auto format(const copylib::parallel_copy_set& p, format_context& ctx) const {
 		ctx.advance_to(std::format_to(ctx.out(), "{{"));
-		for(const auto& plan : p) {
+		auto it = p.cbegin();
+		for(size_t i = 0; i < p.size(); i++) {
+			const auto& plan = *it++;
 			ctx.advance_to(std::formatter<copylib::copy_plan>{}.format(plan, ctx));
-			ctx.advance_to(std::format_to(ctx.out(), ", "));
+			if(i < p.size() - 1) ctx.advance_to(std::format_to(ctx.out(), ", "));
 		}
 		return std::format_to(ctx.out(), "}}");
 	}
