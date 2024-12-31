@@ -82,6 +82,18 @@ struct formatter<copylib::copy_type> : formatter<string> {
 	}
 };
 template <>
+struct formatter<copylib::d2d_implementation> : formatter<string> {
+	auto format(const copylib::d2d_implementation& p, format_context& ctx) const {
+		switch(p) {
+		case copylib::d2d_implementation::direct: return formatter<string>::format("direct", ctx);
+		case copylib::d2d_implementation::host_staging_at_source: return formatter<string>::format("host_staging_at_source", ctx);
+		case copylib::d2d_implementation::host_staging_at_target: return formatter<string>::format("host_staging_at_target", ctx);
+		case copylib::d2d_implementation::host_staging_at_both: return formatter<string>::format("host_staging_at_both", ctx);
+		default: COPYLIB_ERROR("Unknown d2d implementation {}", static_cast<int>(p));
+		}
+	}
+};
+template <>
 struct formatter<copylib::copy_strategy> : formatter<string> {
 	auto format(const copylib::copy_strategy& p, format_context& ctx) const {
 		return formatter<string>::format(std::format("strategy({}({}), chunk:{})", p.type, p.properties, p.chunk_size), ctx);
@@ -118,6 +130,9 @@ ostream& operator<<(ostream& os, const copylib::data_layout& p);
 ostream& operator<<(ostream& os, const copylib::copy_properties& p);
 ostream& operator<<(ostream& os, const copylib::copy_spec& p);
 ostream& operator<<(ostream& os, const copylib::copy_type& p);
+ostream& operator<<(ostream& os, const copylib::d2d_implementation& p);
 ostream& operator<<(ostream& os, const copylib::copy_strategy& p);
+ostream& operator<<(ostream& os, const copylib::copy_plan& p);
+ostream& operator<<(ostream& os, const copylib::parallel_copy_set& p);
 
 } // namespace std

@@ -192,7 +192,7 @@ TEST_CASE("copy plans can be executed", "[executor]") {
 	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
 	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(props);
-	const copy_strategy strat{copy_type::staged, props, 0};
+	const copy_strategy strat{copy_type::staged, props};
 	basic_staging_provider staging_provider;
 	auto copy_plan = apply_staging(spec, strat, staging_provider);
 	REQUIRE(copy_plan.size() == 3);

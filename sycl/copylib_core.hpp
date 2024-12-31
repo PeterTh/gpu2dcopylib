@@ -101,12 +101,26 @@ enum class copy_type {
 	staged, // stage/unstage to a linearized buffer to perform the copy
 };
 
+// defines how to deal with device to device copy operations
+enum class d2d_implementation {
+	direct,                 // directly copy from device to device
+	host_staging_at_source, // stage in host memory at the source device
+	host_staging_at_target, // stage in host memory at the target device
+	host_staging_at_both,   // stage in host memory at both devices, with extra copy operation
+};
+
 // defines the strategy used to copy data between memories
 struct copy_strategy {
 	copy_type type = copy_type::direct;
 	copy_properties properties = copy_properties::none;
-	int64_t chunk_size = 0;        // the size of each chunk to split the copy into, in bytes; 0 means no chunking
-	bool require_host_hop = false; // whether to require a host hop for the copy (if direct device <-> device transfer is not possible)
+	d2d_implementation d2d = d2d_implementation::direct;
+	int64_t chunk_size = 0; // the size of each chunk to split the copy into, in bytes; 0 means no chunking
+
+	copy_strategy() = default;
+	copy_strategy(copy_type t) : type(t) {}
+	copy_strategy(int64_t c) : chunk_size(c) {}
+	copy_strategy(copy_type t, copy_properties p) : type(t), properties(p) {}
+	copy_strategy(copy_type t, copy_properties p, int64_t c) : type(t), properties(p), chunk_size(c) {}
 };
 
 // validate whether a given data layout is sound

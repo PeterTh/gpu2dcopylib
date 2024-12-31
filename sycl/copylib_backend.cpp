@@ -12,7 +12,7 @@
 #define ACPP_WITH_CUDA false
 #endif
 
-#ifdef ACPP_WITH_CUDA
+#if ACPP_WITH_CUDA
 #include <cuda_runtime.h>
 #endif
 

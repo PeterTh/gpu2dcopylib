@@ -116,7 +116,7 @@ TEST_CASE("chunking 1D operations", "[chunking]") {
 	const copy_spec spec{device_id::d0, source, device_id::d1, target};
 	SECTION("single contiguous copy") {
 		const auto chunk_size = GENERATE(0, 1024);
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, chunk_size};
+		const copy_strategy strategy{chunk_size};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 		REQUIRE(copy_set.size() == 1);
@@ -129,7 +129,7 @@ TEST_CASE("chunking 1D operations", "[chunking]") {
 		CHECK(single_copy.target_layout == target);
 	}
 	SECTION("chunking a contiguous copy (perfectly divisible)") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 256};
+		const copy_strategy strategy{256};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 
@@ -142,7 +142,7 @@ TEST_CASE("chunking 1D operations", "[chunking]") {
 		CHECK(copy_set == expected_copy_set);
 	}
 	SECTION("chunking a contiguous copy (not perfectly divisible)") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 400};
+		const copy_strategy strategy{400};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 
@@ -169,7 +169,7 @@ TEST_CASE("chunking 2D operations, same fragment length", "[chunking]") {
 
 	SECTION("no chunking necessary") {
 		const auto chunk_size = GENERATE(0, 8 * 64);
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, chunk_size};
+		const copy_strategy strategy{chunk_size};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 		REQUIRE(copy_set.size() == 1);
@@ -182,7 +182,7 @@ TEST_CASE("chunking 2D operations, same fragment length", "[chunking]") {
 		CHECK(single_copy.target_layout == target);
 	}
 	SECTION("chunking a non-unit stride copy (perfectly divisible)") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 256};
+		const copy_strategy strategy{256};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 
@@ -197,7 +197,7 @@ TEST_CASE("chunking 2D operations, same fragment length", "[chunking]") {
 		CHECK(copy_set == expected_copy_set);
 	}
 	SECTION("chunking a non-unit stride copy (not perfectly divisible)") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 177};
+		const copy_strategy strategy{177};
 
 		const auto copy_set = apply_chunking(spec, strategy);
 
@@ -220,7 +220,7 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 	const copy_spec spec{device_id::d0, source, device_id::d1, target};
 
 	SECTION("perfectly divisible") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 256};
+		const copy_strategy strategy{256};
 		const auto copy_set = apply_chunking(spec, strategy);
 
 		parallel_copy_set expected_copy_set;
@@ -236,7 +236,7 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 	}
 
 	SECTION("with remainder") {
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 177};
+		const copy_strategy strategy{177};
 		const auto copy_set = apply_chunking(spec, strategy);
 
 		parallel_copy_set expected_copy_set;
@@ -261,7 +261,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 
 	SECTION("no staging desired") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 0};
+		const copy_strategy strategy{copy_type::direct};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 1);
 		CHECK(copy_plan.front() == spec);
@@ -270,7 +270,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 	SECTION("no staging necessary") {
 		const copy_spec spec{device_id::d0, target_layout, device_id::d1, target_layout};
 		const auto copy_type = GENERATE(copy_type::direct, copy_type::staged);
-		const copy_strategy strategy{copy_type, copy_properties::none, 0};
+		const copy_strategy strategy{copy_type};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 1);
 		CHECK(copy_plan.front() == spec);
@@ -280,7 +280,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
 		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
-		const copy_strategy strategy{copy_type::staged, props, 0};
+		const copy_strategy strategy{copy_type::staged, props};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 2);
 		CHECK(copy_plan.front().properties == props);
@@ -304,7 +304,7 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 
 	SECTION("no staging desired") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
-		const copy_strategy strategy{copy_type::direct, copy_properties::none, 0};
+		const copy_strategy strategy{copy_type::direct};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 1);
 		CHECK(copy_plan.front() == spec);
@@ -313,7 +313,7 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 	SECTION("no staging necessary") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, source_layout};
 		const auto copy_type = GENERATE(copy_type::direct, copy_type::staged);
-		const copy_strategy strategy{copy_type, copy_properties::none, 0};
+		const copy_strategy strategy{copy_type};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 1);
 		CHECK(copy_plan.front() == spec);
@@ -323,7 +323,7 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
 		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
-		const copy_strategy strategy{copy_type::staged, props, 0};
+		const copy_strategy strategy{copy_type::staged, props};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 2);
 		CHECK(copy_plan.front().properties == props);
@@ -349,7 +349,7 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 	const copy_spec spec{device_id::d0, layout, device_id::d1, layout};
 	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 	CAPTURE(props);
-	const copy_strategy strategy{copy_type::staged, props, 0};
+	const copy_strategy strategy{copy_type::staged, props};
 	const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 	CHECK(copy_plan.size() == 3);
 	CHECK(copy_plan.front().properties == props);
@@ -394,7 +394,7 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 	};
 
 	SECTION("direct copy, no chunking") {
-		const copy_strategy strategy{copy_type::direct, props, 0};
+		const copy_strategy strategy{copy_type::direct, props};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
 		CHECK(verify_properties(copy_set));
@@ -420,7 +420,7 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 	}
 
 	SECTION("staged copy, no chunking") {
-		const copy_strategy strategy{copy_type::staged, props, 0};
+		const copy_strategy strategy{copy_type::staged, props};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
 		CHECK(copy_set.size() == 1);
