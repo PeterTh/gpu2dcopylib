@@ -206,4 +206,16 @@ void execute_copy(executor& exec, const copy_plan& plan) {
 	}
 }
 
+void execute_copy(executor& exec, const parallel_copy_set& set) {
+	// TODO: smarter staging reuse
+	// TODO: better parallelization
+	staging_fulfiller fulfiller(exec);
+	for(const auto& plan : set) {
+		for(auto spec : plan) {
+			fulfiller.fulfill(spec);
+			execute_copy(exec, spec);
+		}
+	}
+}
+
 } // namespace copylib

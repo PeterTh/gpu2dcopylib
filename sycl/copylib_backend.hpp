@@ -25,4 +25,6 @@ void execute_copy(executor& exec, const copy_spec& spec);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 
+void execute_copy(executor& exec, const parallel_copy_set& set);
+
 } // namespace copylib

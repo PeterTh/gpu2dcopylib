@@ -105,7 +105,8 @@ enum class copy_type {
 struct copy_strategy {
 	copy_type type = copy_type::direct;
 	copy_properties properties = copy_properties::none;
-	int64_t chunk_size = 0; // the size of each chunk to split the copy into, in bytes; 0 means no chunking
+	int64_t chunk_size = 0;        // the size of each chunk to split the copy into, in bytes; 0 means no chunking
+	bool require_host_hop = false; // whether to require a host hop for the copy (if direct device <-> device transfer is not possible)
 };
 
 // validate whether a given data layout is sound
