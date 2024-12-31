@@ -11,7 +11,6 @@
 namespace copylib {
 
 bool is_valid(const data_layout& layout) { //
-	if(layout.base < data_layout::min_staging_id) { return false; }
 	return layout.fragment_length > 0 && layout.fragment_count > 0
 	       && (layout.stride >= layout.fragment_length ||
 	           // simple contiguous layout (allowed for 1D copies)
@@ -244,6 +243,34 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 	COPYLIB_ERROR("Unexpected copy layout when chunking: {}", spec);
 }
 
+copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d) {
+	if(d2d == d2d_implementation::direct) { return plan; }
+	// we need to change any copies that go from a device to another device
+	copy_plan new_plan;
+	std::optional<data_layout> updated_source_layout; // if we changed the previous copy, we need to update the source layout of the subsequent one to this
+	for(const auto& spec : plan) {
+		if(spec.source_device == spec.target_device || spec.source_device == device_id::host || spec.target_device == device_id::host) {
+			auto new_spec = spec;
+			if(updated_source_layout.has_value()) {
+				new_spec.source_layout = updated_source_layout.value();
+				updated_source_layout.reset();
+			}
+			new_plan.push_back(spec);
+		} else {
+			COPYLIB_ENSURE(!updated_source_layout.has_value(), "Cannot have two consecutive device-to-other-device copies in a plan");
+			switch(d2d) {
+			default: COPYLIB_ERROR("Unknown d2d implementation: {}", d2d);
+			}
+		}
+	}
+	return new_plan;
+}
+
+parallel_copy_set apply_d2d_implementation(const parallel_copy_set&, const d2d_implementation) {
+	COPYLIB_ERROR("Not implemented");
+	return {};
+}
+
 namespace {
 	data_layout create_2D_staging_layout(const copy_strategy& strategy, const data_layout& layout, const data_layout& spec) {
 		// for native 2D copies, we need to have individual fragments
@@ -271,9 +298,10 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	// if the source is not unit stride, we need to stage the source
 	std::optional<copy_spec> source_staging_copy;
 	if(!spec.source_layout.unit_stride()) {
-		const auto source_staging_buffer = staging_provider(spec.source_device, spec.source_layout.total_bytes());
-		const data_layout staged_source_layout = create_2D_staging_layout(
-		    strategy, {source_staging_buffer, 0, spec.source_layout.total_bytes(), 1, spec.source_layout.total_bytes()}, spec.source_layout);
+		COPYLIB_ENSURE(spec.source_device != device_id::host, "Cannot stage source from host: {}", spec);
+		const auto source_staging_buffer = staging_provider(spec.source_device, false, spec.source_layout.total_bytes());
+		const data_layout staged_source_layout =
+		    create_2D_staging_layout(strategy, {source_staging_buffer, 0, spec.source_layout.total_bytes()}, spec.source_layout);
 		source_staging_copy.emplace(spec.source_device, spec.source_layout, spec.source_device, staged_source_layout, strategy.properties);
 		COPYLIB_ENSURE(is_valid(source_staging_copy.value()), "Created invalid source staging copy {} from {}", source_staging_copy.value(), spec);
 	}
@@ -281,9 +309,10 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	// if the target is not unit stride, we need to unstage the target
 	std::optional<copy_spec> target_unstaging_copy;
 	if(!spec.target_layout.unit_stride()) {
-		const auto target_staging_buffer = staging_provider(spec.target_device, spec.target_layout.total_bytes());
-		const data_layout staged_target_layout = create_2D_staging_layout(
-		    strategy, {target_staging_buffer, 0, spec.target_layout.total_bytes(), 1, spec.target_layout.total_bytes()}, spec.target_layout);
+		COPYLIB_ENSURE(spec.target_device != device_id::host, "Cannot unstage target to host: {}", spec);
+		const auto target_staging_buffer = staging_provider(spec.target_device, false, spec.target_layout.total_bytes());
+		const data_layout staged_target_layout =
+		    create_2D_staging_layout(strategy, {target_staging_buffer, 0, spec.target_layout.total_bytes()}, spec.target_layout);
 		target_unstaging_copy.emplace(spec.target_device, staged_target_layout, spec.target_device, spec.target_layout, strategy.properties);
 		COPYLIB_ENSURE(is_valid(target_unstaging_copy.value()), "Created invalid target unstaging copy {} from {}", target_unstaging_copy.value(), spec);
 	}

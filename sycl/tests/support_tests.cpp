@@ -49,11 +49,17 @@ TEST_CASE("formatting of types", "[format]") {
 		CHECK(std::format("{}", device_id::d0) == "d0");
 		CHECK(std::format("{}", device_id::d5) == "d5");
 	}
+	SECTION("staging_id") {
+		const staging_id id{true, device_id::d0, 42};
+		CHECK(std::format("{}", id) == "S(42, d0host)");
+		const staging_id id2{false, device_id::d1, 0};
+		CHECK(std::format("{}", id2) == "S(0, d1)");
+	}
 	SECTION("data_layout") {
 		const data_layout layout{0, 0, 1024, 1, 1024};
 		CHECK(std::format("{}", layout) == "{0x0+0, [1024 * 1, 1024]}");
-		const data_layout staging_layout{-3, 0, 1024, 1};
-		CHECK(std::format("{}", staging_layout) == "{S-3+0, [1024 * 1, 0]}");
+		const data_layout staging_layout{staging_id{false, device_id::d0, 0}, 0, 1024};
+		CHECK(std::format("{}", staging_layout) == "{S(0, d0)+0, [1024 * 1, 1024]}");
 	}
 	SECTION("copy_properties") {
 		CHECK(std::format("{}", copy_properties::none) == "");
@@ -62,15 +68,21 @@ TEST_CASE("formatting of types", "[format]") {
 		CHECK(std::format("{}", copy_properties::use_kernel | copy_properties::use_2D_copy) == "use_kernel,use_2D_copy");
 	}
 	SECTION("copy_spec") {
-		const copy_spec spec{device_id::d0, {0, 42, 1024, 1, 1024}, device_id::d1, {0xdeadbeef, 0, 256, 4, 320}};
-		CHECK(std::format("{}", spec) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdeadbeef+0, [256 * 4, 320]})");
+		const copy_spec spec{device_id::d0, {0, 42, 1024, 1, 1024}, device_id::d1, {0xdead0000, 0, 256, 4, 320}};
+		CHECK(std::format("{}", spec) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]})");
 		copy_spec spec2 = spec;
 		spec2.properties = copy_properties::use_kernel;
-		CHECK(std::format("{}", spec2) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdeadbeef+0, [256 * 4, 320]} (use_kernel))");
+		CHECK(std::format("{}", spec2) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]} (use_kernel))");
 	}
 	SECTION("copy_type") {
 		CHECK(std::format("{}", copy_type::direct) == "direct");
 		CHECK(std::format("{}", copy_type::staged) == "staged");
+	}
+	SECTION("d2d_implementation") {
+		CHECK(std::format("{}", d2d_implementation::direct) == "direct");
+		CHECK(std::format("{}", d2d_implementation::host_staging_at_source) == "host_staging_at_source");
+		CHECK(std::format("{}", d2d_implementation::host_staging_at_target) == "host_staging_at_target");
+		CHECK(std::format("{}", d2d_implementation::host_staging_at_both) == "host_staging_at_both");
 	}
 	SECTION("copy_strategy") {
 		const copy_strategy strategy{copy_type::direct, copy_properties::use_kernel, 256};

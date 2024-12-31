@@ -24,7 +24,7 @@ struct device {
 using device_list = std::vector<device>;
 inline device_list g_devices;
 
-enum class device_id : int64_t {
+enum class device_id : int16_t {
 	host = -1,
 	d0 = 0,
 	d1 = 1,
@@ -34,15 +34,44 @@ enum class device_id : int64_t {
 	d5 = 5,
 	d6 = 6,
 	d7 = 7,
+	count = 8,
 };
+
+#pragma pack(push, 0)
+struct staging_id {
+	uint32_t index = 0;
+	device_id did = device_id::d0;
+	uint8_t on_host = false;
+	uint8_t is_staging_id = true;
+
+	staging_id() = default;
+	staging_id(bool on_host, device_id did, uint32_t index) : index(index), did(did), on_host(on_host) {}
+
+	constexpr bool operator==(const staging_id& other) const = default;
+	constexpr bool operator!=(const staging_id& other) const = default;
+};
+#pragma pack(pop)
+static_assert(sizeof(staging_id) == sizeof(intptr_t));
+static_assert(offsetof(staging_id, is_staging_id) == 7);
 
 // data layout used as the source or destination of a copy operation
 struct data_layout {
-	intptr_t base = 0;
+	union {
+		intptr_t base = 0;
+		staging_id staging;
+	};
 	int64_t offset = 0;
 	int64_t fragment_length = 0;
 	int64_t fragment_count = 1;
 	int64_t stride = 0;
+
+	constexpr data_layout() = default;
+	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length) : base(base), offset(offset), fragment_length(fragment_length) {}
+	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length, int64_t fragment_count, int64_t stride)
+	    : base(base), offset(offset), fragment_length(fragment_length), fragment_count(fragment_count), stride(stride) {}
+
+	data_layout(staging_id staging, int64_t offset, int64_t fragment_length)
+	    : staging(staging), offset(offset), fragment_length(fragment_length), stride(fragment_length) {}
 
 	constexpr int64_t total_bytes() const { return fragment_count * fragment_length; }
 	constexpr int64_t total_extent() const { return offset + fragment_count * stride; }
@@ -54,16 +83,18 @@ struct data_layout {
 	}
 	constexpr int64_t end_offset() const { return fragment_offset(fragment_count - 1) + fragment_length; }
 
-	static constexpr intptr_t min_staging_id = -100;
-	constexpr bool is_unplaced_staging() const { return base < 0 && base > min_staging_id; }
+	constexpr bool is_unplaced_staging() const { return staging.is_staging_id; }
 
 	std::byte* base_ptr() const {
-		COPYLIB_ENSURE(base > 0, "Invalid base pointer (uninitialized staging?): {}", base);
+		COPYLIB_ENSURE(!is_unplaced_staging(), "Invalid base pointer (uninitialized staging?): {}", base);
 		return reinterpret_cast<std::byte*>(base);
 	}
 
-	constexpr bool operator==(const data_layout& other) const = default;
-	constexpr bool operator!=(const data_layout& other) const = default;
+	constexpr bool operator==(const data_layout& other) const {
+		return base == other.base && offset == other.offset && fragment_length == other.fragment_length && fragment_count == other.fragment_count
+		       && stride == other.stride;
+	}
+	constexpr bool operator!=(const data_layout& other) const { return !(*this == other); }
 };
 
 enum class copy_properties {
@@ -153,18 +184,24 @@ copy_spec apply_properties(const copy_spec&, const copy_properties&);
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec&, const copy_strategy&);
 
-using staging_buffer_provider = std::function<intptr_t(device_id, int64_t)>;
+// apply the desired d2d implementation to the given copy plan
+copy_plan apply_d2d_implementation(const copy_plan&, const d2d_implementation);
+
+// apply the desired d2d implementation to the given parallel copy set (by applying it to each copy plan)
+parallel_copy_set apply_d2d_implementation(const parallel_copy_set&, const d2d_implementation);
+
+using staging_buffer_provider = std::function<staging_id(device_id, bool, int64_t)>;
 
 class basic_staging_provider {
   public:
-	intptr_t operator()(device_id id, int64_t size) {
+	staging_id operator()(device_id did, bool on_host, int64_t size) {
 		COPYLIB_ENSURE(size > 0, "Invalid staging buffer size: {}", size);
-		COPYLIB_ENSURE(next_staging_id > data_layout::min_staging_id, "Staging buffer overflow");
-		return next_staging_id--;
+		COPYLIB_ENSURE(did != device_id::host, "Invalid staging buffer request: device id is host");
+		return {on_host, did, next_staging_idx++};
 	}
 
   private:
-	int64_t next_staging_id = -1;
+	uint32_t next_staging_idx = 0;
 };
 
 // apply staging to the given spec if requested by the strategy

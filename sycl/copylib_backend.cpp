@@ -90,7 +90,6 @@ std::byte* executor::get_buffer(device_id id) {
 	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
 	return devices[static_cast<int>(id)].dev_buffer;
 }
-
 std::byte* executor::get_staging_buffer(device_id id) {
 	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
 	return devices[static_cast<int>(id)].staging_buffer;
@@ -99,6 +98,10 @@ std::byte* executor::get_staging_buffer(device_id id) {
 std::byte* executor::get_host_buffer(device_id id) {
 	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
 	return devices[static_cast<int>(id)].host_buffer;
+}
+std::byte* executor::get_host_staging_buffer(device_id id) {
+	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
+	return devices[static_cast<int>(id)].host_staging_buffer;
 }
 
 template <typename T>
@@ -191,36 +194,58 @@ class staging_fulfiller {
   public:
 	staging_fulfiller(executor& exec) : exec(exec) {}
 
-	void fulfill(data_layout& layout, device_id did) {
+	void fulfill(data_layout& layout) {
 		if(layout.is_unplaced_staging()) {
-			const auto staging_idx = -layout.base - 1;
-			if(staging_buffers[staging_idx].buffer == nullptr) {
-				staging_buffers[staging_idx].size = layout.total_bytes();
-				staging_buffers[staging_idx].buffer = exec.get_staging_buffer(did) + current_staging_offset;
-				current_staging_offset += staging_buffers[staging_idx].size + (staging_buffers[staging_idx].size % staging_alignment);
-				COPYLIB_ENSURE(current_staging_offset <= exec.get_buffer_size(), "Staging buffer overflow");
+			const auto staging_idx = layout.staging.index;
+			auto staging_it = staging_buffers.find(staging_idx);
+			if(staging_it == staging_buffers.end()) {
+				const auto did = layout.staging.did;
+				const bool host = layout.staging.on_host;
+				COPYLIB_ENSURE(did != device_id::host, "Device id for staging cannot be host");
+				staging_info info{
+				    .size = layout.total_bytes(),
+				    .device = did,
+				    .on_host = host,
+				};
+				if(host) {
+					info.buffer = exec.get_host_staging_buffer(did) + current_host_staging_offsets[static_cast<size_t>(did)];
+					current_host_staging_offsets[static_cast<size_t>(did)] += info.size + staging_alignment % info.size;
+					COPYLIB_ENSURE(current_host_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(),
+					    "Staging buffer overflow on host for device {}", static_cast<int>(did));
+				} else {
+					info.buffer = exec.get_staging_buffer(did) + current_staging_offsets[static_cast<size_t>(did)];
+					current_staging_offsets[static_cast<size_t>(did)] += info.size + staging_alignment % info.size;
+					COPYLIB_ENSURE(current_staging_offsets[static_cast<size_t>(did)] <= exec.get_buffer_size(), "Staging buffer overflow for device {}",
+					    static_cast<int>(did));
+				}
+				staging_it = staging_buffers.emplace(staging_idx, info).first;
 			} else {
 				COPYLIB_ENSURE(staging_buffers[staging_idx].size == layout.total_bytes(), "Staging buffer size mismatch");
+				COPYLIB_ENSURE(staging_buffers[staging_idx].device == layout.staging.did, "Staging buffer device mismatch");
+				COPYLIB_ENSURE(staging_buffers[staging_idx].on_host == layout.staging.on_host, "Staging buffer host flag mismatch");
 			}
-			layout.base = reinterpret_cast<intptr_t>(staging_buffers[staging_idx].buffer);
+			layout.base = reinterpret_cast<intptr_t>(staging_it->second.buffer);
 		}
 	}
 
 	void fulfill(copy_spec& spec) {
-		fulfill(spec.source_layout, spec.source_device);
-		fulfill(spec.target_layout, spec.target_device);
+		fulfill(spec.source_layout);
+		fulfill(spec.target_layout);
 	}
 
   private:
 	executor& exec;
-	int64_t current_staging_offset = 0;
+	std::vector<int64_t> current_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
+	std::vector<int64_t> current_host_staging_offsets = std::vector<int64_t>(static_cast<int>(device_id::count), 0);
 	static constexpr int64_t staging_alignment = 128;
 
 	struct staging_info {
 		int64_t size = 0;
+		device_id device = device_id::d0;
+		bool on_host = false;
 		std::byte* buffer = nullptr;
 	};
-	std::vector<staging_info> staging_buffers = std::vector<staging_info>(-data_layout::min_staging_id);
+	std::unordered_map<decltype(staging_id::index), staging_info> staging_buffers;
 };
 
 void execute_copy(executor& exec, const copy_plan& plan) {

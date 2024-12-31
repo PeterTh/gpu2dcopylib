@@ -47,9 +47,16 @@ struct formatter<copylib::device_id> : formatter<string> {
 	}
 };
 template <>
+struct formatter<copylib::staging_id> : formatter<string> {
+	auto format(const copylib::staging_id& p, format_context& ctx) const {
+		COPYLIB_ENSURE(p.is_staging_id, "Invalid staging id: {}", p);
+		return formatter<string>::format(std::format("S({}, {}{})", p.index, p.did, p.on_host ? "host" : ""), ctx);
+	}
+};
+template <>
 struct formatter<copylib::data_layout> : formatter<string> {
 	auto format(const copylib::data_layout& p, format_context& ctx) const {
-		std::string addr = (p.is_unplaced_staging()) ? std::format("S{}", p.base) : std::format("{:p}", reinterpret_cast<void*>(p.base));
+		std::string addr = (p.is_unplaced_staging()) ? std::format("{}", p.staging) : std::format("{:p}", reinterpret_cast<void*>(p.base));
 		return formatter<string>::format(std::format("{{{}+{}, [{} * {}, {}]}}", addr, p.offset, p.fragment_length, p.fragment_count, p.stride), ctx);
 	}
 };
@@ -126,6 +133,7 @@ struct formatter<copylib::parallel_copy_set> : formatter<string> {
 };
 
 ostream& operator<<(ostream& os, const copylib::device_id& p);
+ostream& operator<<(ostream& os, const copylib::staging_id& p);
 ostream& operator<<(ostream& os, const copylib::data_layout& p);
 ostream& operator<<(ostream& os, const copylib::copy_properties& p);
 ostream& operator<<(ostream& os, const copylib::copy_spec& p);

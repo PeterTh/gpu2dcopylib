@@ -9,6 +9,7 @@ namespace std {
 	}
 
 COPYLIB_OSTREAM_FOR(device_id)
+COPYLIB_OSTREAM_FOR(staging_id)
 COPYLIB_OSTREAM_FOR(data_layout)
 COPYLIB_OSTREAM_FOR(copy_properties)
 COPYLIB_OSTREAM_FOR(copy_spec)

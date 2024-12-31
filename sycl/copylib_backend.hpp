@@ -11,6 +11,7 @@ class executor {
 	std::byte* get_buffer(device_id id);
 	std::byte* get_staging_buffer(device_id id);
 	std::byte* get_host_buffer(device_id id);
+	std::byte* get_host_staging_buffer(device_id id);
 
 	int64_t get_buffer_size() const { return buffer_size; }
 

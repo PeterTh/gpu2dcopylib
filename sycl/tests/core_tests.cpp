@@ -41,7 +41,7 @@ TEST_CASE("copy plan validation", "[validation]") {
 	// check connectivity between steps
 	const copy_plan invalid_plan2{valid_spec, {device_id::d2, valid_layout, device_id::d2, valid_layout}}; // wrong device
 	CHECK(!is_valid(invalid_plan2));
-	const copy_plan invalid_plan3{valid_spec, {device_id::d1, {0, 0, 512, 2}, device_id::d2, valid_layout}}; // wrong layout
+	const copy_plan invalid_plan3{valid_spec, {device_id::d1, {0, 0, 512, 2, 512}, device_id::d2, valid_layout}}; // wrong layout
 	CHECK(!is_valid(invalid_plan3));
 }
 
@@ -253,7 +253,7 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 	}
 }
 
-intptr_t test_staging_buffer_provider(device_id id, int64_t) { return 0x42 + 0x100 * static_cast<int>(id); }
+staging_id test_staging_buffer_provider(device_id did, bool on_host, int64_t) { return {on_host, did, 42}; }
 
 TEST_CASE("staging copy specs at the source end", "[staging]") {
 	const data_layout source_layout{0, 0, 16, 64, 128};
@@ -288,7 +288,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 		CHECK(copy_plan.front().source_layout == source_layout);
 		CHECK(copy_plan.front().target_device == device_id::d0);
 		CHECK(copy_plan.front().target_layout.unit_stride());
-		CHECK(copy_plan.front().target_layout.base == 0x42);
+		CHECK(copy_plan.front().target_layout.staging.is_staging_id);
 		CHECK(copy_plan.back().properties == props);
 		CHECK(copy_plan.back().source_device == device_id::d0);
 		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
@@ -331,7 +331,7 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 		CHECK(copy_plan.front().source_layout == source_layout);
 		CHECK(copy_plan.front().target_device == device_id::d1);
 		CHECK(copy_plan.front().target_layout.unit_stride());
-		CHECK(copy_plan.front().target_layout.base == 0x142);
+		CHECK(copy_plan.front().target_layout.staging == staging_id{false, device_id::d1, 42}); // staged on d1 since that's not unit stride
 		CHECK(copy_plan.back().properties == props);
 		CHECK(copy_plan.back().source_device == device_id::d1);
 		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
@@ -357,13 +357,13 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 	CHECK(copy_plan.front().source_layout == layout);
 	CHECK(copy_plan.front().target_device == device_id::d0);
 	if(!(props & copy_properties::use_2D_copy)) CHECK(copy_plan.front().target_layout.unit_stride());
-	CHECK(copy_plan.front().target_layout.base == 0x42);
+	CHECK(copy_plan.front().target_layout.staging == staging_id{false, device_id::d0, 42});
 	CHECK(copy_plan[1].properties == props);
 	CHECK(copy_plan[1].source_device == device_id::d0);
 	CHECK(copy_plan[1].source_layout == copy_plan.front().target_layout);
 	CHECK(copy_plan[1].target_device == device_id::d1);
 	if(!(props & copy_properties::use_2D_copy)) CHECK(copy_plan[1].target_layout.unit_stride());
-	CHECK(copy_plan[1].target_layout.base == 0x142);
+	CHECK(copy_plan[1].target_layout.staging == staging_id{false, device_id::d1, 42});
 	CHECK(copy_plan.back().properties == props);
 	CHECK(copy_plan.back().source_device == device_id::d1);
 	CHECK(copy_plan.back().source_layout == copy_plan[1].target_layout);
