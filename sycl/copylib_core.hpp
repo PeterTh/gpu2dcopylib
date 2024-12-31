@@ -72,6 +72,8 @@ struct data_layout {
 
 	data_layout(staging_id staging, int64_t offset, int64_t fragment_length)
 	    : staging(staging), offset(offset), fragment_length(fragment_length), stride(fragment_length) {}
+	data_layout(staging_id staging, int64_t offset, int64_t fragment_length, int64_t fragment_count, int64_t stride)
+	    : staging(staging), offset(offset), fragment_length(fragment_length), fragment_count(fragment_count), stride(stride) {}
 
 	constexpr int64_t total_bytes() const { return fragment_count * fragment_length; }
 	constexpr int64_t total_extent() const { return offset + fragment_count * stride; }
@@ -151,7 +153,9 @@ struct copy_strategy {
 	copy_strategy(copy_type t) : type(t) {}
 	copy_strategy(int64_t c) : chunk_size(c) {}
 	copy_strategy(copy_type t, copy_properties p) : type(t), properties(p) {}
+	copy_strategy(copy_type t, copy_properties p, d2d_implementation d) : type(t), properties(p), d2d(d) {}
 	copy_strategy(copy_type t, copy_properties p, int64_t c) : type(t), properties(p), chunk_size(c) {}
+	copy_strategy(copy_type t, copy_properties p, d2d_implementation d, int64_t c) : type(t), properties(p), d2d(d), chunk_size(c) {}
 };
 
 // validate whether a given data layout is sound
@@ -184,12 +188,6 @@ copy_spec apply_properties(const copy_spec&, const copy_properties&);
 // apply chunking to the given copy spec if requested by the strategy
 parallel_copy_set apply_chunking(const copy_spec&, const copy_strategy&);
 
-// apply the desired d2d implementation to the given copy plan
-copy_plan apply_d2d_implementation(const copy_plan&, const d2d_implementation);
-
-// apply the desired d2d implementation to the given parallel copy set (by applying it to each copy plan)
-parallel_copy_set apply_d2d_implementation(const parallel_copy_set&, const d2d_implementation);
-
 using staging_buffer_provider = std::function<staging_id(device_id, bool, int64_t)>;
 
 class basic_staging_provider {
@@ -209,6 +207,12 @@ copy_plan apply_staging(const copy_spec&, const copy_strategy&, const staging_bu
 
 // apply staging to each copy spec in the given parallel copy set if requested by the strategy
 parallel_copy_set apply_staging(const parallel_copy_set&, const copy_strategy&, const staging_buffer_provider&);
+
+// apply the desired d2d implementation to the given copy plan
+copy_plan apply_d2d_implementation(const copy_plan&, const d2d_implementation, const staging_buffer_provider&);
+
+// apply the desired d2d implementation to the given parallel copy set (by applying it to each copy plan)
+parallel_copy_set apply_d2d_implementation(const parallel_copy_set&, const d2d_implementation, const staging_buffer_provider&);
 
 // manifests the copy strategy on the given copy spec, applying chunking and staging as necessary
 parallel_copy_set manifest_strategy(const copy_spec&, const copy_strategy&, const staging_buffer_provider&);

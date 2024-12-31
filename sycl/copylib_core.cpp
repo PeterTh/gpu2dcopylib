@@ -243,34 +243,6 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 	COPYLIB_ERROR("Unexpected copy layout when chunking: {}", spec);
 }
 
-copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d) {
-	if(d2d == d2d_implementation::direct) { return plan; }
-	// we need to change any copies that go from a device to another device
-	copy_plan new_plan;
-	std::optional<data_layout> updated_source_layout; // if we changed the previous copy, we need to update the source layout of the subsequent one to this
-	for(const auto& spec : plan) {
-		if(spec.source_device == spec.target_device || spec.source_device == device_id::host || spec.target_device == device_id::host) {
-			auto new_spec = spec;
-			if(updated_source_layout.has_value()) {
-				new_spec.source_layout = updated_source_layout.value();
-				updated_source_layout.reset();
-			}
-			new_plan.push_back(spec);
-		} else {
-			COPYLIB_ENSURE(!updated_source_layout.has_value(), "Cannot have two consecutive device-to-other-device copies in a plan");
-			switch(d2d) {
-			default: COPYLIB_ERROR("Unknown d2d implementation: {}", d2d);
-			}
-		}
-	}
-	return new_plan;
-}
-
-parallel_copy_set apply_d2d_implementation(const parallel_copy_set&, const d2d_implementation) {
-	COPYLIB_ERROR("Not implemented");
-	return {};
-}
-
 namespace {
 	data_layout create_2D_staging_layout(const copy_strategy& strategy, const data_layout& layout, const data_layout& spec) {
 		// for native 2D copies, we need to have individual fragments
@@ -348,9 +320,64 @@ parallel_copy_set apply_staging(const parallel_copy_set& spec, const copy_strate
 	return copies;
 }
 
+copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
+	COPYLIB_ENSURE(is_valid(plan), "Invalid copy plan, cannot apply d2d implementation: {}", plan);
+	if(d2d == d2d_implementation::direct) { return plan; }
+	// we need to change any copies that go from a device to another device
+	copy_plan new_plan;
+	for(const auto& spec : plan) {
+		if(spec.source_device == spec.target_device || spec.source_device == device_id::host || spec.target_device == device_id::host) {
+			new_plan.push_back(spec);
+		} else {
+			switch(d2d) {
+			case d2d_implementation::host_staging_at_source: {
+				const auto staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.total_bytes());
+				const data_layout staged_layout = {
+				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			case d2d_implementation::host_staging_at_target: {
+				const auto staging_buffer = staging_provider(spec.target_device, true, spec.source_layout.total_bytes());
+				const data_layout staged_layout = {
+				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			case d2d_implementation::host_staging_at_both: {
+				const auto source_staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.total_bytes());
+				const data_layout staged_source_layout = {
+				    source_staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_source_layout, spec.properties);
+				const auto target_staging_buffer = staging_provider(spec.target_device, true, spec.target_layout.total_bytes());
+				const data_layout staged_target_layout = {
+				    target_staging_buffer, 0, spec.target_layout.fragment_length, spec.target_layout.fragment_count, spec.target_layout.fragment_length};
+				new_plan.emplace_back(device_id::host, staged_source_layout, device_id::host, staged_target_layout, spec.properties);
+				new_plan.emplace_back(device_id::host, staged_target_layout, spec.target_device, spec.target_layout, spec.properties);
+				break;
+			}
+			default: COPYLIB_ERROR("Unknown d2d implementation: {}", d2d);
+			}
+		}
+	}
+	return new_plan;
+}
+
+parallel_copy_set apply_d2d_implementation(const parallel_copy_set& copy_set, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
+	parallel_copy_set ret;
+	for(const auto& plan : copy_set) {
+		ret.insert(apply_d2d_implementation(plan, d2d, staging_provider));
+	}
+	return ret;
+}
+
 parallel_copy_set manifest_strategy(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
 	const auto chunked_copies = apply_chunking(spec, strategy);
-	return apply_staging(chunked_copies, strategy, staging_provider);
+	const auto staged_copies = apply_staging(chunked_copies, strategy, staging_provider);
+	const auto finalized_copies = apply_d2d_implementation(staged_copies, strategy.d2d, staging_provider);
+	return finalized_copies;
 }
 
 } // namespace copylib

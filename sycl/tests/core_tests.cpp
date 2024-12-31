@@ -372,6 +372,75 @@ TEST_CASE("staging copy specs at both ends", "[staging]") {
 	CHECK(is_equivalent(copy_plan, spec));
 }
 
+TEST_CASE("Applying d2d implementations", "[d2d]") {
+	const data_layout src_layout{0, 0, 16, 64, 128};
+	const data_layout tgt_layout = src_layout;
+	const copy_spec spec{device_id::d0, src_layout, device_id::d1, tgt_layout};
+
+	SECTION("direct copy") {
+		const copy_strategy strategy{copy_type::direct};
+		const auto copy_plan = apply_d2d_implementation({spec}, d2d_implementation::direct, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 1);
+		CHECK(copy_plan.front() == spec);
+	}
+	SECTION("staged on one end") {
+		const copy_strategy strategy{copy_type::staged};
+		const d2d_implementation impl = GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target);
+		CAPTURE(impl);
+		const auto copy_plan = apply_d2d_implementation({spec}, impl, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 2);
+		const staging_id expected_staging = staging_id{true, impl == d2d_implementation::host_staging_at_source ? device_id::d0 : device_id::d1, 42};
+		const data_layout expected_staged_layout = {
+		    expected_staging, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
+		CHECK(copy_plan.front() == copy_spec{device_id::d0, src_layout, device_id::host, expected_staged_layout});
+		CHECK(copy_plan.back() == copy_spec{device_id::host, expected_staged_layout, device_id::d1, tgt_layout});
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+	SECTION("staged on both ends") {
+		const copy_strategy strategy{copy_type::staged};
+		const auto copy_plan = apply_d2d_implementation({spec}, d2d_implementation::host_staging_at_both, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 3);
+		const staging_id staging_id_1{true, device_id::d0, 42};
+		const staging_id staging_id_2{true, device_id::d1, 42};
+		const data_layout staged_layout_1 = {
+		    staging_id_1, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
+		const data_layout staged_layout_2 = {
+		    staging_id_2, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
+		CHECK(copy_plan.front() == copy_spec{device_id::d0, src_layout, device_id::host, staged_layout_1});
+		CHECK(copy_plan[1] == copy_spec{device_id::host, staged_layout_1, device_id::host, staged_layout_2});
+		CHECK(copy_plan.back() == copy_spec{device_id::host, staged_layout_2, device_id::d1, tgt_layout});
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+}
+
+TEST_CASE("Applying d2d implementations to staged plans", "[d2d]") {
+	const data_layout src_layout{0, 0, 16, 64, 128};
+	const data_layout tgt_layout = src_layout;
+	const copy_spec spec{device_id::d0, src_layout, device_id::d1, tgt_layout};
+	const auto staged_plan = apply_staging(spec, copy_strategy{copy_type::staged}, test_staging_buffer_provider);
+
+	SECTION("direct copy") {
+		const copy_strategy strategy{copy_type::direct};
+		const auto copy_plan = apply_d2d_implementation(staged_plan, d2d_implementation::direct, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 3);
+		CHECK(copy_plan == staged_plan);
+	}
+	SECTION("staged on one end") {
+		const copy_strategy strategy{copy_type::staged};
+		const d2d_implementation impl = GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target);
+		CAPTURE(impl);
+		const auto copy_plan = apply_d2d_implementation(staged_plan, impl, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 4);
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+	SECTION("staged on both ends") {
+		const copy_strategy strategy{copy_type::staged};
+		const auto copy_plan = apply_d2d_implementation(staged_plan, d2d_implementation::host_staging_at_both, test_staging_buffer_provider);
+		REQUIRE(copy_plan.size() == 5);
+		CHECK(is_equivalent(copy_plan, spec));
+	}
+}
+
 TEST_CASE("implementing copy strategies", "[copy]") {
 	const data_layout source_layout{0x10000, 0x42, 16, 1024, 4096};
 	const int frag_size_multiplier = GENERATE(1, 2);
@@ -420,7 +489,10 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 	}
 
 	SECTION("staged copy, no chunking") {
-		const copy_strategy strategy{copy_type::staged, props};
+		const d2d_implementation impl = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source,
+		    d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+		CAPTURE(impl);
+		const copy_strategy strategy{copy_type::staged, props, impl};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
 		CHECK(copy_set.size() == 1);
@@ -428,7 +500,10 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 	}
 
 	SECTION("staged copy, with chunking") {
-		const copy_strategy strategy{copy_type::staged, props, 512};
+		const d2d_implementation impl = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source,
+		    d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+		CAPTURE(impl);
+		const copy_strategy strategy{copy_type::staged, props, impl, 512};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
 		CHECK(copy_set.size() == 16 * 1024 / 512);
@@ -436,7 +511,10 @@ TEST_CASE("implementing copy strategies", "[copy]") {
 	}
 
 	SECTION("staged copy, with chunking, remainder") {
-		const copy_strategy strategy{copy_type::staged, props, 177};
+		const d2d_implementation impl = GENERATE(d2d_implementation::direct, d2d_implementation::host_staging_at_source,
+		    d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+		CAPTURE(impl);
+		const copy_strategy strategy{copy_type::staged, props, impl, 177};
 		const auto copy_set = manifest_strategy(spec, strategy, test_staging_buffer_provider);
 		CHECK(is_equivalent(copy_set, spec));
 		const auto target_frag_length = target_layout.fragment_length;
