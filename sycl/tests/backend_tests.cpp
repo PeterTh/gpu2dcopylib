@@ -42,7 +42,7 @@ void fill_uniform(executor& exec, device_id did, intptr_t buffer, size_t bytes, 
 // fill a source with a known pattern to check the target against after copying
 void fill_source(executor& exec, device_id did, intptr_t src_buffer, size_t src_buffer_size, const data_layout& source_layout, uint32_t start_value) {
 	COPYLIB_ENSURE(source_layout.total_extent() <= static_cast<int64_t>(src_buffer_size), "Buffer too small for source layout");
-	fill_uniform(exec, device_id::d0, src_buffer, src_buffer_size, 77);
+	fill_uniform(exec, did, src_buffer, src_buffer_size, 77);
 	auto queue = exec.get_queue(did);
 	for(int i = 0; i < source_layout.fragment_count; i++) {
 		const auto bytes = source_layout.fragment_length;
@@ -112,6 +112,33 @@ TEST_CASE("basic copies can be executed", "[executor]") {
 	exec.get_queue(device_id::d0).wait_and_throw();
 
 	CHECK(validate_target(exec, device_id::d0, tgt_buffer, target_layout, source_layout));
+}
+
+TEST_CASE("2D host <-> host copies work", "[executor]") {
+	const int64_t buffer_size = 1024 * 128;
+	executor exec(buffer_size);
+
+	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_host_buffer(device_id::d0));
+	const data_layout source_layout{src_buffer, 0, 16, 64, 128};
+	memset(reinterpret_cast<void*>(src_buffer), 0x42, buffer_size);
+
+	const auto tgt_buffer = reinterpret_cast<intptr_t>(exec.get_host_buffer(device_id::d1));
+	const data_layout target_layout{tgt_buffer, 0, 16, 64, 128};
+	memset(reinterpret_cast<void*>(tgt_buffer), 0x66, buffer_size);
+
+	const copy_spec spec{device_id::host, source_layout, device_id::host, target_layout, copy_properties::none};
+	execute_copy(exec, normalize(spec));
+
+	bool valid = true;
+	for(int i = 0; i < buffer_size && valid; i++) {
+		uint8_t val = reinterpret_cast<uint8_t*>(tgt_buffer)[i];
+		if(i % source_layout.stride < source_layout.fragment_length && i / source_layout.stride < source_layout.fragment_count) {
+			valid = valid && (val == 0x42);
+		} else {
+			valid = valid && (val == 0x66);
+		}
+	}
+	CHECK(valid);
 }
 
 TEST_CASE("2D copies can be executed", "[executor]") {
@@ -240,9 +267,45 @@ TEST_CASE("chunked copy can be executed", "[executor]") {
 	if(debug_print) { print_buffer("src", src_buffer, source_layout.end_offset()); }
 
 	execute_copy(exec, copy_set);
-	exec.get_queue(device_id::d0).wait_and_throw();
 
 	if(debug_print) { print_buffer("tgt", tgt_buffer, target_layout.end_offset()); }
 
 	CHECK(validate_target(exec, device_id::d0, tgt_buffer, target_layout, source_layout));
+}
+
+TEST_CASE("fully manifested device to device copy sets can be executed", "executor") {
+	const int64_t buffer_size = 1024 * 128;
+	executor exec(buffer_size * 2);
+
+	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
+	const data_layout src_layout{src_buffer, 0, 16, 128, 32};
+	const auto tgt_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d1));
+	const data_layout tgt_layout{tgt_buffer, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.stride};
+	const auto spec = copy_spec{device_id::d0, src_layout, device_id::d1, tgt_layout};
+
+	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	CAPTURE(props);
+	const copy_type type = GENERATE(copy_type::direct, copy_type::staged);
+	CAPTURE(type);
+	const d2d_implementation d2d =
+	    GENERATE(d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target, d2d_implementation::host_staging_at_both);
+	CAPTURE(d2d);
+
+	const auto chunk_size = 77;
+	const copy_strategy strat{type, props, d2d, chunk_size};
+	auto copy_set = manifest_strategy(spec, strat, basic_staging_provider{});
+	REQUIRE(is_equivalent(copy_set, spec));
+
+	fill_source(exec, device_id::d0, src_buffer, buffer_size, src_layout, 42);
+	fill_uniform(exec, device_id::d1, tgt_buffer, buffer_size, 66);
+
+	constexpr bool debug_print = false;
+	if(debug_print) { print_buffer("src", src_buffer, src_layout.end_offset()); }
+
+	execute_copy(exec, copy_set);
+
+	if(debug_print) { print_buffer("tgt", tgt_buffer, tgt_layout.end_offset()); }
+
+	CHECK(validate_target(exec, device_id::d1, tgt_buffer, tgt_layout, src_layout));
 }

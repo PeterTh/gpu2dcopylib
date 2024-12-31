@@ -22,7 +22,7 @@ class executor {
 
 bool is_2d_copy_available();
 
-void execute_copy(executor& exec, const copy_spec& spec);
+device_id execute_copy(executor& exec, const copy_spec& spec);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 

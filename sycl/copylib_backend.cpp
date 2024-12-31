@@ -140,9 +140,34 @@ void copy_with_kernel(sycl::queue& q, const copy_spec& spec) {
 	}
 }
 
-void execute_copy(executor& exec, const copy_spec& spec) {
-	auto& queue = exec.get_queue(spec.source_device);
-	if(spec.properties & copy_properties::use_kernel) {
+template <typename CopyFun>
+void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, const data_layout& target_layout) {
+	const auto larger_fragment_count = std::max(source_layout.fragment_count, target_layout.fragment_count);
+	const auto smaller_fragment_size = std::min(source_layout.fragment_length, target_layout.fragment_length);
+	for(int64_t frag = 0; frag < larger_fragment_count; ++frag) {
+		const auto src_factor = source_layout.fragment_length / smaller_fragment_size;
+		const auto tgt_factor = target_layout.fragment_length / smaller_fragment_size;
+		const auto src_fragment_id = frag / src_factor;
+		const auto tgt_fragment_id = frag / tgt_factor;
+		const auto src_offset_in_fragment = frag % src_factor * target_layout.fragment_length;
+		const auto src = source_layout.base_ptr() + source_layout.fragment_offset(src_fragment_id) + src_offset_in_fragment;
+		const auto tgt_offset_in_fragment = frag % tgt_factor * source_layout.fragment_length;
+		const auto tgt = target_layout.base_ptr() + target_layout.fragment_offset(tgt_fragment_id) + tgt_offset_in_fragment;
+		fun(src, tgt, smaller_fragment_size);
+	}
+}
+
+device_id execute_copy(executor& exec, const copy_spec& spec) {
+	// for host <-> host copies, use memcpy
+	if(spec.source_device == device_id::host && spec.target_device == device_id::host) {
+		copy_via_repeated_1D_copies(
+		    [](const std::byte* src, std::byte* tgt, int64_t length) { std::memcpy(tgt, src, length); }, spec.source_layout, spec.target_layout);
+		return device_id::host;
+	}
+	const device_id device_to_use = spec.source_device == device_id::host ? spec.target_device : spec.source_device;
+	auto& queue = exec.get_queue(device_to_use);
+	// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
+	if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
 		copy_with_kernel(queue, spec);
 	} else if(spec.properties & copy_properties::use_2D_copy) {
 #if SYCL_EXT_ONEAPI_MEMCPY2D > 0
@@ -173,21 +198,10 @@ void execute_copy(executor& exec, const copy_spec& spec) {
 		COPYLIB_ERROR("2D copy requested, but not supported by the backend");
 #endif // SYCL_EXT_ONEAPI_MEMCPY2D
 	} else {
-		// repeated 1D copies
-		const auto larger_fragment_count = std::max(spec.source_layout.fragment_count, spec.target_layout.fragment_count);
-		const auto smaller_fragment_size = std::min(spec.source_layout.fragment_length, spec.target_layout.fragment_length);
-		for(int64_t frag = 0; frag < larger_fragment_count; ++frag) {
-			const auto src_factor = spec.source_layout.fragment_length / smaller_fragment_size;
-			const auto tgt_factor = spec.target_layout.fragment_length / smaller_fragment_size;
-			const auto src_fragment_id = frag / src_factor;
-			const auto tgt_fragment_id = frag / tgt_factor;
-			const auto src_offset_in_fragment = frag % src_factor * spec.target_layout.fragment_length;
-			const auto src = spec.source_layout.base_ptr() + spec.source_layout.fragment_offset(src_fragment_id) + src_offset_in_fragment;
-			const auto tgt_offset_in_fragment = frag % tgt_factor * spec.source_layout.fragment_length;
-			const auto tgt = spec.target_layout.base_ptr() + spec.target_layout.fragment_offset(tgt_fragment_id) + tgt_offset_in_fragment;
-			queue.copy(src, tgt, smaller_fragment_size);
-		}
+		copy_via_repeated_1D_copies(
+		    [&](const std::byte* src, std::byte* tgt, int64_t length) { queue.copy(src, tgt, length); }, spec.source_layout, spec.target_layout);
 	}
+	return device_to_use;
 }
 
 class staging_fulfiller {
@@ -252,19 +266,20 @@ void execute_copy(executor& exec, const copy_plan& plan) {
 	staging_fulfiller fulfiller(exec);
 	for(auto spec : plan) {
 		fulfiller.fulfill(spec);
-		execute_copy(exec, spec);
-		exec.get_queue(spec.source_device).wait_and_throw();
+		auto dev = execute_copy(exec, spec);
+		if(dev != device_id::host) exec.get_queue(dev).wait_and_throw();
 	}
 }
 
 void execute_copy(executor& exec, const parallel_copy_set& set) {
 	// TODO: smarter staging reuse
-	// TODO: better parallelization
+	// TODO: actual parallelization
 	staging_fulfiller fulfiller(exec);
 	for(const auto& plan : set) {
 		for(auto spec : plan) {
 			fulfiller.fulfill(spec);
-			execute_copy(exec, spec);
+			auto dev = execute_copy(exec, spec);
+			if(dev != device_id::host) exec.get_queue(dev).wait_and_throw();
 		}
 	}
 }
