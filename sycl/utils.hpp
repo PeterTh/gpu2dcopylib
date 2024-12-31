@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>          // IWYU pragma: keep (for std::hash)
 #include <source_location> // IWYU pragma: keep (used in macro)
+#include <string_view>
 
 namespace copylib::utils {
 

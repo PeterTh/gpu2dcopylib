@@ -6,13 +6,23 @@
 #include <simsycl/system.hh>
 #endif
 
+#if defined(SYCL_EXT_ACPP_BACKEND_CUDA) && defined(COPYLIB_CUDA)
+#define ACPP_WITH_CUDA true
+#else
+#define ACPP_WITH_CUDA false
+#endif
+
+#ifdef ACPP_WITH_CUDA
+#include <cuda_runtime.h>
+#endif
+
 namespace copylib {
 
 bool is_2d_copy_available() {
 #if SYCL_EXT_ONEAPI_MEMCPY2D > 0
 	return true;
 #else
-	return false;
+	return ACPP_WITH_CUDA;
 #endif // SYCL_EXT_ONEAPI_MEMCPY2D
 }
 
@@ -140,6 +150,22 @@ void execute_copy(executor& exec, const copy_spec& spec) {
 		const auto width = spec.source_layout.fragment_length;
 		const auto count = spec.source_layout.fragment_count;
 		queue.ext_oneapi_memcpy2d(dst_ptr, effective_dst_stride, src_ptr, effective_src_stride, width, count);
+#elif ACPP_WITH_CUDA
+		const cudaMemcpyKind kind = [&] {
+			if(spec.source_device == device_id::host && spec.target_device != device_id::host) {
+				return cudaMemcpyHostToDevice;
+			} else if(spec.source_device != device_id::host && spec.target_device == device_id::host) {
+				return cudaMemcpyDeviceToHost;
+			} else {
+				return cudaMemcpyDeviceToDevice;
+			}
+		}();
+		queue.AdaptiveCpp_enqueue_custom_operation([=](sycl::interop_handle handle) {
+			const auto& stream = handle.get_native_queue<sycl::backend::cuda>();
+			cudaMemcpy2DAsync(spec.target_layout.base_ptr() + spec.target_layout.offset, spec.target_layout.effective_stride(), //
+			    spec.source_layout.base_ptr() + spec.source_layout.offset, spec.source_layout.effective_stride(),               //
+			    spec.source_layout.fragment_length, spec.source_layout.fragment_count, kind, stream);
+		});
 #else
 		COPYLIB_ERROR("2D copy requested, but not supported by the backend");
 #endif // SYCL_EXT_ONEAPI_MEMCPY2D
