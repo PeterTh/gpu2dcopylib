@@ -23,6 +23,8 @@ size_t hash_args(const T& first, const Args&... args) {
 }
 
 void print_to_cerr(std::string_view); // just to avoid including <iostream>
+
+std::vector<std::string> split(const std::string& str, char delim);
 } // namespace copylib::utils
 
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \

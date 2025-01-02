@@ -6,7 +6,7 @@
 #include <simsycl/system.hh>
 #endif
 
-#if defined(SYCL_EXT_ACPP_BACKEND_CUDA) && defined(COPYLIB_CUDA)
+#if defined(__ACPP_ENABLE_CUDA_TARGET__) && defined(COPYLIB_CUDA)
 #define ACPP_WITH_CUDA true
 #else
 #define ACPP_WITH_CUDA false
@@ -16,14 +16,87 @@
 #include <cuda_runtime.h>
 #endif
 
+#include <thread>
+
 namespace copylib {
 
-bool is_2d_copy_available() {
+std::string executor::get_sycl_impl_name() const {
+#if defined(SIMSYCL_VERSION)
+	return "SimSYCL";
+#elif defined(__ADAPTIVECPP__)
+	std::string ret = "AdaptiveCPP";
+#if defined(__ACPP_ENABLE_CUDA_TARGET__)
+	ret += " (CUDA)";
+#endif // __ACPP_ENABLE_CUDA_TARGET__
+	return ret;
+#elif defined(SYCL_LANGUAGE_VERSION) && defined(__INTEL_LLVM_COMPILER)
+	return "IntelSYCL";
+#else
+	return "Unknown SYCL implementation";
+#endif
+}
+
+bool executor::is_2d_copy_available() const {
 #if SYCL_EXT_ONEAPI_MEMCPY2D > 0
 	return true;
 #else
 	return ACPP_WITH_CUDA;
 #endif // SYCL_EXT_ONEAPI_MEMCPY2D
+}
+
+bool executor::is_device_to_device_copy_available() const {
+#if defined(SIMSYCL_VERSION)
+	return true;
+#elif defined(__ADAPTIVECPP__)
+#if defined(__ACPP_ENABLE_CUDA_TARGET__)
+	return true; // CUDA emulates p2p transfers even if ont available
+#else
+	return false; // assumption for now
+#endif
+#elif defined(SYCL_LANGUAGE_VERSION) && defined(__INTEL_LLVM_COMPILER)
+	if(gpu_devices.empty()) { return false; }
+	return gpu_devices.front().get_info<sycl::info::device::vendor>().find("NVIDIA") != std::string::npos;
+#endif
+}
+
+int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
+	constexpr int max_gpu_idx = static_cast<int>(device_id::count);
+	COPYLIB_ENSURE(gpu_idx < max_gpu_idx && gpu_idx >= 0, "Invalid gpu index: {} (needs to be >=0 and <{})", gpu_idx, max_gpu_idx);
+	COPYLIB_ENSURE(total_gpu_count <= max_gpu_idx, "Invalid total gpu count: {} (needs to be <{})", total_gpu_count, max_gpu_idx);
+	thread_local bool initialized = false;
+	thread_local std::array<int, max_gpu_idx> cpu_for_gpu;
+	if(!initialized) {
+		auto env_var = std::getenv("COPYLIB_ALLOC_CPU_IDS");
+		if(env_var) {
+			const auto cpu_ids = std::string(env_var);
+			const auto cpu_ids_split = utils::split(cpu_ids, ',');
+			COPYLIB_ENSURE(cpu_ids_split.size() == total_gpu_count, "Invalid number of CPU IDs provided in COPYLIB_ALLOC_CPU_IDS: {} (expected {})",
+			    cpu_ids_split.size(), total_gpu_count);
+			for(size_t i = 0; i < total_gpu_count; i++) {
+				cpu_for_gpu[i] = std::stoi(cpu_ids_split[i]);
+			}
+		} else { // guess
+			const auto hw_concurrency = std::thread::hardware_concurrency();
+			const auto cores = hw_concurrency / 2; // we just assume 2 threads per core
+			for(size_t i = 0; i < total_gpu_count; i++) {
+				cpu_for_gpu[i] = cores / total_gpu_count * i;
+			}
+		}
+	}
+	return cpu_for_gpu[gpu_idx];
+}
+
+std::string executor::get_info() const {
+	auto ret = std::format("Copylib executor with {} device(s) and buffer size {} bytes\n", devices.size(), buffer_size);
+	ret += std::format("SYCL implementation: {}\n", get_sycl_impl_name());
+	ret += std::format("  2D copy available: {}\n", is_2d_copy_available());
+	ret += std::format(" D2D copy available: {}\n", is_device_to_device_copy_available());
+	for(size_t i = 0; i < devices.size(); i++) {
+		ret += std::format("    Device {:2}: {} [{}]", i, //
+		    gpu_devices[i].get_info<sycl::info::device::name>(), gpu_devices[i].get_info<sycl::info::device::vendor>());
+		ret += std::format(" (host alloc on core {})\n", get_cpu_for_gpu_alloc(i, devices.size()));
+	}
+	return ret;
 }
 
 executor::executor(int64_t buffer_size) : buffer_size(buffer_size) {
@@ -37,7 +110,7 @@ executor::executor(int64_t buffer_size) : buffer_size(buffer_size) {
 
 	const int64_t total_bytes = buffer_size;
 
-	const auto gpu_devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+	gpu_devices = sycl::device::get_devices(sycl::info::device_type::gpu);
 	cpu_set_t prior_mask;
 	CPU_ZERO(&prior_mask);
 	COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
@@ -54,7 +127,8 @@ executor::executor(int64_t buffer_size) : buffer_size(buffer_size) {
 
 		cpu_set_t mask_for_device;
 		CPU_ZERO(&mask_for_device);
-		CPU_SET(32 * dev_id, &mask_for_device); // TODO fix hardcoded NUMA <-> device mapping
+		const auto cpu_id = get_cpu_for_gpu_alloc(dev_id, gpu_devices.size());
+		CPU_SET(cpu_id, &mask_for_device);
 		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
 
 		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);

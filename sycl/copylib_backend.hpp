@@ -15,12 +15,17 @@ class executor {
 
 	int64_t get_buffer_size() const { return buffer_size; }
 
+	std::string get_sycl_impl_name() const;
+	bool is_2d_copy_available() const;
+	bool is_device_to_device_copy_available() const;
+	std::string get_info() const;
+
   private:
 	device_list devices;
+	std::vector<sycl::device> gpu_devices;
 	int64_t buffer_size;
 };
 
-bool is_2d_copy_available();
 
 device_id execute_copy(executor& exec, const copy_spec& spec);
 

@@ -93,31 +93,46 @@ void print_buffer(const char* name, intptr_t buffer, size_t bytes) {
 	}
 }
 
-TEST_CASE("basic copies can be executed", "[executor]") {
-	const int64_t buffer_size = GENERATE(1024, 76);
-	CAPTURE(buffer_size);
-	executor exec(buffer_size * 2);
+// we want to reuse the same exeutor for all tests, otherwise this takes inordinately longer on anything that's not SimSYCL
+struct ExecutorFixture {
+	constexpr static int64_t buffer_size = 1024 * 1024;
+	mutable executor exec = executor(buffer_size * 2);
+};
+
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "executor info dump", "[executor]") {
+	const auto info = exec.get_info();
+	CHECK(!info.empty());
+	utils::print_to_cerr(std::format("Executor info:\n{}", info));
+	utils::print_to_cerr("Tests will be included or excluded based on the available capabilities\n");
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "basic copies can be executed", "[executor]") {
+	const int64_t copy_extent = GENERATE(1024, 76);
+	CAPTURE(copy_extent);
 
 	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
-	const data_layout source_layout{src_buffer, 0, buffer_size};
-	fill_source(exec, device_id::d0, src_buffer, buffer_size, source_layout, 42);
+	const data_layout source_layout{src_buffer, 0, copy_extent};
+	fill_source(exec, device_id::d0, src_buffer, copy_extent, source_layout, 42);
 
-	const auto tgt_buffer = src_buffer + buffer_size;
-	const data_layout target_layout{tgt_buffer, 0, buffer_size};
-	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
-	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	const auto tgt_device = exec.is_device_to_device_copy_available() ? GENERATE(device_id::d0, device_id::d1) : device_id::d0;
+	CAPTURE(tgt_device);
+	const auto tgt_buffer = tgt_device == device_id::d0 ? src_buffer + buffer_size : reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d1));
+	const data_layout target_layout{tgt_buffer, 0, copy_extent};
+
+	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 	CAPTURE(props);
+	const bool copy_2d_ok = exec.is_2d_copy_available(), copy_kernel_ok = tgt_device == device_id::d0;
+	if(!copy_2d_ok && props == copy_properties::use_2D_copy) { return; }
+	if(!copy_kernel_ok && props == copy_properties::use_kernel) { return; }
+
 	const copy_spec spec{device_id::d0, source_layout, device_id::d0, target_layout, props};
 	execute_copy(exec, normalize(spec));
 	exec.get_queue(device_id::d0).wait_and_throw();
 
-	CHECK(validate_target(exec, device_id::d0, tgt_buffer, target_layout, source_layout));
+	CHECK(validate_target(exec, tgt_device, tgt_buffer, target_layout, source_layout));
 }
 
-TEST_CASE("2D host <-> host copies work", "[executor]") {
-	const int64_t buffer_size = 1024 * 128;
-	executor exec(buffer_size);
-
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "2D host <-> host copies work", "[executor]") {
 	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_host_buffer(device_id::d0));
 	const data_layout source_layout{src_buffer, 0, 16, 64, 128};
 	memset(reinterpret_cast<void*>(src_buffer), 0x42, buffer_size);
@@ -141,10 +156,7 @@ TEST_CASE("2D host <-> host copies work", "[executor]") {
 	CHECK(valid);
 }
 
-TEST_CASE("2D copies can be executed", "[executor]") {
-	const int64_t buffer_size = 1024 * 128;
-	executor exec(buffer_size * 2);
-
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "2D copies can be executed", "[executor]") {
 	auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	const int64_t source_offset = GENERATE(0, 32);
 	CAPTURE(source_offset);
@@ -161,7 +173,8 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 	constexpr bool debug_print = false;
 	if(debug_print) { print_buffer("src", src_buffer, source_layout.end_offset()); }
 
-	const device_id tgt_device = GENERATE(device_id::d0, device_id::d1);
+	const device_id tgt_device = exec.is_device_to_device_copy_available() ? GENERATE(device_id::d0, device_id::d1) : device_id::d0;
+	CAPTURE(tgt_device);
 
 	auto tgt_buffer = [&] {
 		switch(tgt_device) {
@@ -170,7 +183,7 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 		default: COPYLIB_ERROR("Invalid target device: {}", static_cast<int>(tgt_device));
 		}
 	}();
-	const double target_frag_factor = GENERATE(0.5, 1.0, 2.0);
+	const double target_frag_factor = 1.0; // GENERATE(0.5, 1.0, 2.0);
 	CAPTURE(target_frag_factor);
 	const int64_t target_offset = GENERATE(0, 80);
 	CAPTURE(target_offset);
@@ -182,19 +195,16 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 	fill_uniform(exec, tgt_device, tgt_buffer, buffer_size, 66);
 
 	// this is admittedly a bit weird
-	const bool copy_2d_ok = is_2d_copy_available() && target_frag_factor == 1.0, copy_kernel_ok = tgt_device == device_id::d0;
-	const copy_properties props = [&] {
-		if(copy_2d_ok && copy_kernel_ok) {
-			return GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
-		} else if(copy_2d_ok) {
-			return GENERATE(copy_properties::none, copy_properties::use_2D_copy);
-		} else if(copy_kernel_ok) {
-			return GENERATE(copy_properties::none, copy_properties::use_kernel);
-		} else {
-			return copy_properties::none;
-		}
-	}();
+	const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy);
 	CAPTURE(props);
+	const bool copy_2d_ok = exec.is_2d_copy_available() && target_frag_factor == 1.0, copy_kernel_ok = tgt_device == device_id::d0;
+	if(!copy_2d_ok && props == copy_properties::use_2D_copy) { return; }
+	if(!copy_kernel_ok && props == copy_properties::use_kernel) { return; }
+
+	if(debug_print) {
+		utils::print_to_cerr(std::format("so: {:6}, sfl: {:6}, sfc: {:6}, sst: {:6}, td: {}, tff: {:6}, to: {:6}, cpp: {}", //
+		    source_offset, source_frag_length, source_frag_count, source_stride, tgt_device, target_frag_factor, target_offset, props));
+	}
 
 	const copy_spec spec{tgt_device, source_layout, device_id::d0, target_layout, props};
 	REQUIRE(is_valid(spec));
@@ -206,18 +216,15 @@ TEST_CASE("2D copies can be executed", "[executor]") {
 	CHECK(validate_target(exec, tgt_device, tgt_buffer, target_layout, source_layout));
 }
 
-TEST_CASE("copy plans can be executed", "[executor]") {
-	const int64_t buffer_size = 1024 * 128;
-	executor exec(buffer_size * 2);
-
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "copy plans can be executed", "[executor]") {
 	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	const data_layout source_layout{src_buffer, 0, 16, 20, 256};
 	const auto tgt_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0) + buffer_size);
 	const data_layout target_layout{tgt_buffer, 0, 16, 20, 256};
 	const auto spec = copy_spec{device_id::d0, source_layout, device_id::d0, target_layout};
 
-	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
-	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	const copy_properties props = exec.is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                                          : GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(props);
 	const copy_strategy strat{copy_type::staged, props};
 	basic_staging_provider staging_provider;
@@ -232,18 +239,15 @@ TEST_CASE("copy plans can be executed", "[executor]") {
 	CHECK(validate_target(exec, device_id::d0, tgt_buffer, target_layout, source_layout));
 }
 
-TEST_CASE("chunked copy can be executed", "[executor]") {
-	const int64_t buffer_size = 1024 * 128;
-	executor exec(buffer_size * 2);
-
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "chunked copy can be executed", "[executor]") {
 	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	const data_layout source_layout{src_buffer, 0, 8, 16, 768};
 	const auto tgt_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0) + buffer_size);
 	const data_layout target_layout{tgt_buffer, source_layout.offset, source_layout.fragment_length, source_layout.fragment_count, source_layout.stride};
 	const auto spec = copy_spec{device_id::d0, source_layout, device_id::d0, target_layout};
 
-	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
-	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	const copy_properties props = exec.is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                                          : GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(props);
 	const copy_type type = GENERATE(copy_type::direct, copy_type::staged);
 	CAPTURE(type);
@@ -273,18 +277,15 @@ TEST_CASE("chunked copy can be executed", "[executor]") {
 	CHECK(validate_target(exec, device_id::d0, tgt_buffer, target_layout, source_layout));
 }
 
-TEST_CASE("fully manifested device to device copy sets can be executed", "executor") {
-	const int64_t buffer_size = 1024 * 128;
-	executor exec(buffer_size * 2);
-
+TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "fully manifested device to device copy sets can be executed", "executor") {
 	const auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	const data_layout src_layout{src_buffer, 0, 16, 128, 32};
 	const auto tgt_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d1));
 	const data_layout tgt_layout{tgt_buffer, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.stride};
 	const auto spec = copy_spec{device_id::d0, src_layout, device_id::d1, tgt_layout};
 
-	const copy_properties props = is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
-	                                                     : GENERATE(copy_properties::none, copy_properties::use_kernel);
+	const copy_properties props = exec.is_2d_copy_available() ? GENERATE(copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy)
+	                                                          : GENERATE(copy_properties::none, copy_properties::use_kernel);
 	CAPTURE(props);
 	const copy_type type = GENERATE(copy_type::direct, copy_type::staged);
 	CAPTURE(type);

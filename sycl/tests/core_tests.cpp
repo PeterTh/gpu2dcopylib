@@ -288,7 +288,7 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 		CHECK(copy_plan.front().source_layout == source_layout);
 		CHECK(copy_plan.front().target_device == device_id::d0);
 		CHECK(copy_plan.front().target_layout.unit_stride());
-		CHECK(copy_plan.front().target_layout.staging.is_staging_id);
+		CHECK(copy_plan.front().target_layout.is_unplaced_staging());
 		CHECK(copy_plan.back().properties == props);
 		CHECK(copy_plan.back().source_device == device_id::d0);
 		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);

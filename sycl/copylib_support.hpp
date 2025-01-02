@@ -49,7 +49,7 @@ struct formatter<copylib::device_id> : formatter<string> {
 template <>
 struct formatter<copylib::staging_id> : formatter<string> {
 	auto format(const copylib::staging_id& p, format_context& ctx) const {
-		COPYLIB_ENSURE(p.is_staging_id, "Invalid staging id: {}", p);
+		COPYLIB_ENSURE(p.is_staging_id == copylib::staging_id::staging_id_flag, "Invalid staging id: {}", p);
 		return formatter<string>::format(std::format("S({}, {}{})", p.index, p.did, p.on_host ? "host" : ""), ctx);
 	}
 };

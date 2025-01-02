@@ -39,20 +39,21 @@ enum class device_id : int16_t {
 
 #pragma pack(push, 0)
 struct staging_id {
-	uint32_t index = 0;
-	device_id did = device_id::d0;
+	constexpr static uint8_t staging_id_flag = 0b00000001;
+	uint8_t is_staging_id = staging_id_flag;
 	uint8_t on_host = false;
-	uint8_t is_staging_id = true;
+	device_id did = device_id::d0;
+	uint32_t index = 0;
 
 	staging_id() = default;
-	staging_id(bool on_host, device_id did, uint32_t index) : index(index), did(did), on_host(on_host) {}
+	staging_id(bool on_host, device_id did, uint32_t index) : on_host(on_host), did(did), index(index) {}
 
 	constexpr bool operator==(const staging_id& other) const = default;
 	constexpr bool operator!=(const staging_id& other) const = default;
 };
 #pragma pack(pop)
 static_assert(sizeof(staging_id) == sizeof(intptr_t));
-static_assert(offsetof(staging_id, is_staging_id) == 7);
+static_assert(offsetof(staging_id, is_staging_id) == 0);
 
 // data layout used as the source or destination of a copy operation
 struct data_layout {
@@ -85,7 +86,7 @@ struct data_layout {
 	}
 	constexpr int64_t end_offset() const { return fragment_offset(fragment_count - 1) + fragment_length; }
 
-	constexpr bool is_unplaced_staging() const { return staging.is_staging_id; }
+	constexpr bool is_unplaced_staging() const { return staging.is_staging_id == staging_id::staging_id_flag; }
 
 	std::byte* base_ptr() const {
 		COPYLIB_ENSURE(!is_unplaced_staging(), "Invalid base pointer (uninitialized staging?): {}", base);
