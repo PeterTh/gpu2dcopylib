@@ -7,9 +7,8 @@
 
 namespace copylib::utils {
 
-void print_to_cerr(std::string_view msg) { //
-	std::cerr << msg << std::endl;
-}
+void dump_to_cerr(std::string_view msg) { std::cerr << msg; }
+void dump_to_cout(std::string_view msg) { std::cout << msg; }
 
 std::vector<std::string> split(const std::string& str, char delim) {
 	std::vector<std::string> result;

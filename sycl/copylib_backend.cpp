@@ -59,6 +59,19 @@ bool executor::is_device_to_device_copy_available() const {
 #endif
 }
 
+int32_t executor::get_preferred_wg_size() const {
+	thread_local int32_t wg_size = -1;
+	if(wg_size == -1) {
+		if(gpu_devices.empty()) { return 32; }
+		if(gpu_devices.front().get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
+			wg_size = 128;
+		} else {
+			wg_size = 32;
+		}
+	}
+	return wg_size;
+}
+
 int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 	constexpr int max_gpu_idx = static_cast<int>(device_id::count);
 	COPYLIB_ENSURE(gpu_idx < max_gpu_idx && gpu_idx >= 0, "Invalid gpu index: {} (needs to be >=0 and <{})", gpu_idx, max_gpu_idx);
@@ -99,17 +112,23 @@ std::string executor::get_info() const {
 	return ret;
 }
 
-executor::possibility executor::can_copy(const parallel_copy_set& cset) const {
+executor::possibility executor::can_copy(const copy_spec& spec) const {
 	const bool d2d = is_device_to_device_copy_available();
 	const bool two_d = is_2d_copy_available();
+	const auto d2d_copy = spec.source_device != spec.target_device && spec.source_device != device_id::host && spec.target_device != device_id::host;
+	if(d2d_copy) {
+		if(spec.properties & copy_properties::use_kernel) { return possibility::needs_d2d_copy; } // TODO need to be more specific here later
+		if(!d2d) { return possibility::needs_d2d_copy; }
+	}
+	if(!two_d && (spec.properties & copy_properties::use_2D_copy)) { return possibility::needs_2d_copy; }
+	return possibility::possible;
+}
+
+executor::possibility executor::can_copy(const parallel_copy_set& cset) const {
 	for(const auto& plan : cset) {
 		for(const auto& spec : plan) {
-			const auto d2d_copy = spec.source_device != spec.target_device && spec.source_device != device_id::host && spec.target_device != device_id::host;
-			if(d2d_copy) {
-				if(spec.properties & copy_properties::use_kernel) { return possibility::needs_d2d_copy; } // TODO need to be more specific here later
-				if(!d2d) { return possibility::needs_d2d_copy; }
-			}
-			if(!two_d && (spec.properties & copy_properties::use_2D_copy)) { return possibility::needs_2d_copy; }
+			const auto res = can_copy(spec);
+			if(res != possibility::possible) { return res; }
 		}
 	}
 	return possibility::possible;
@@ -200,39 +219,94 @@ std::byte* executor::get_host_staging_buffer(device_id id) {
 	return devices[static_cast<int>(id)].host_staging_buffer;
 }
 
-template <typename T>
-void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec) {
+template <typename T, typename IdxType>
+void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType preferred_wg_size) {
 	const T* src = reinterpret_cast<T*>(spec.source_layout.base_ptr() + spec.source_layout.offset);
 	T* tgt = reinterpret_cast<T*>(spec.target_layout.base_ptr() + spec.target_layout.offset);
-	const int64_t src_frag_elems = spec.source_layout.fragment_length / sizeof(T);
-	const int64_t tgt_frag_elems = spec.target_layout.fragment_length / sizeof(T);
-	const auto src_stride = spec.source_layout.effective_stride() / sizeof(T);
-	const auto tgt_stride = spec.target_layout.effective_stride() / sizeof(T);
-	q.parallel_for(sycl::range<1>{spec.source_layout.total_bytes() / sizeof(T)}, [=](sycl::id<1> idx) {
-		const int64_t src_frag = idx[0] / src_frag_elems;
-		const int64_t tgt_frag = idx[0] / tgt_frag_elems;
-		tgt[tgt_frag * tgt_stride + idx[0] % tgt_frag_elems] = src[src_frag * src_stride + idx[0] % src_frag_elems];
-	});
+
+	const IdxType extent = spec.source_layout.total_bytes() / sizeof(T);
+	IdxType wg_size = preferred_wg_size;
+	while(extent % wg_size != 0) {
+		wg_size /= 2;
+	}
+	const sycl::nd_range<1> ndr{extent, wg_size};
+	if(spec.source_layout.fragment_count == spec.target_layout.fragment_count) {
+		const IdxType frag_elems = spec.source_layout.fragment_length / sizeof(T);
+		const IdxType src_stride = spec.source_layout.effective_stride() / sizeof(T);
+		const IdxType tgt_stride = spec.target_layout.effective_stride() / sizeof(T);
+		// sadly, all this sillyness is actually measurably faster
+		if(frag_elems == 1) {
+			if(tgt_stride == 1) {
+				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
+					const IdxType i = idx.get_global_id(0);
+					const IdxType src_i = i * src_stride;
+					tgt[i] = src[src_i];
+				});
+			} else if(src_stride == 1) {
+				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
+					const IdxType i = idx.get_global_id(0);
+					const IdxType tgt_i = i * tgt_stride;
+					tgt[tgt_i] = src[i];
+				});
+			} else {
+				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
+					const IdxType i = idx.get_global_id(0);
+					const IdxType src_i = i * src_stride;
+					const IdxType tgt_i = i * tgt_stride;
+					tgt[tgt_i] = src[src_i];
+				});
+			}
+		} else {
+			q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
+				const IdxType i = idx.get_global_id(0);
+				const IdxType frag = i / frag_elems;
+				const IdxType id_in_frag = i % frag_elems;
+				tgt[frag * tgt_stride + id_in_frag] = src[frag * src_stride + id_in_frag];
+			});
+		}
+	} else {
+		const IdxType src_frag_elems = spec.source_layout.fragment_length / sizeof(T);
+		const IdxType tgt_frag_elems = spec.target_layout.fragment_length / sizeof(T);
+		const IdxType src_stride = spec.source_layout.effective_stride() / sizeof(T);
+		const IdxType tgt_stride = spec.target_layout.effective_stride() / sizeof(T);
+		q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
+			const IdxType i = idx.get_global_id(0);
+			const IdxType src_frag = i / src_frag_elems;
+			const IdxType tgt_frag = i / tgt_frag_elems;
+			tgt[tgt_frag * tgt_stride + i % tgt_frag_elems] = src[src_frag * src_stride + i % src_frag_elems];
+		});
+	}
 }
 
-void copy_with_kernel(sycl::queue& q, const copy_spec& spec) {
+template <typename T>
+void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {
+	int64_t max = std::numeric_limits<int32_t>::max();
+	if(spec.source_layout.fragment_count < max && spec.source_layout.fragment_count < max && spec.source_layout.effective_stride() < max
+	    && spec.target_layout.effective_stride() < max && spec.source_layout.fragment_length < max && spec.target_layout.fragment_length < max) {
+		copy_with_kernel_impl<T, int32_t>(q, spec, preferred_wg_size);
+	} else {
+		copy_with_kernel_impl<T, int64_t>(q, spec, preferred_wg_size);
+	}
+}
+
+void copy_with_kernel(sycl::queue& q, const copy_spec& spec, int32_t preferred_wg_size) {
 	// case distinction based on fragment size
 	const auto smaller_fragment_size = std::min(spec.source_layout.fragment_length, spec.target_layout.fragment_length);
 	const auto smaller_stride = std::min(spec.source_layout.effective_stride(), spec.target_layout.effective_stride());
 	if(smaller_fragment_size % sizeof(sycl::int16) == 0 && smaller_stride % sizeof(sycl::int16) == 0) {
-		copy_with_kernel_impl<sycl::int16>(q, spec);
+		copy_with_kernel_impl<sycl::int16>(q, spec, preferred_wg_size);
 	} else if(smaller_fragment_size % sizeof(sycl::int8) == 0 && smaller_stride % sizeof(sycl::int8) == 0) {
-		copy_with_kernel_impl<sycl::int8>(q, spec);
+		copy_with_kernel_impl<sycl::int8>(q, spec, preferred_wg_size);
 	} else if(smaller_fragment_size % sizeof(sycl::int4) == 0 && smaller_stride % sizeof(sycl::int4) == 0) {
-		copy_with_kernel_impl<sycl::int4>(q, spec);
+		copy_with_kernel_impl<sycl::int4>(q, spec, preferred_wg_size);
 	} else if(smaller_fragment_size % sizeof(sycl::int2) == 0 && smaller_stride % sizeof(sycl::int2) == 0) {
-		copy_with_kernel_impl<sycl::int2>(q, spec);
+		copy_with_kernel_impl<sycl::int2>(q, spec, preferred_wg_size);
 	} else if(smaller_fragment_size % sizeof(int32_t) == 0 && smaller_stride % sizeof(int32_t) == 0) {
-		copy_with_kernel_impl<int32_t>(q, spec);
+		copy_with_kernel_impl<int32_t>(q, spec, preferred_wg_size);
 	} else if(smaller_fragment_size % sizeof(int16_t) == 0 && smaller_stride % sizeof(int16_t) == 0) {
-		copy_with_kernel_impl<int16_t>(q, spec);
+		copy_with_kernel_impl<int16_t>(q, spec, preferred_wg_size);
 	} else {
-		copy_with_kernel_impl<int8_t>(q, spec);
+		copy_with_kernel_impl<int8_t>(q, spec, preferred_wg_size);
 	}
 }
 
@@ -264,7 +338,7 @@ device_id execute_copy(executor& exec, const copy_spec& spec) {
 	auto& queue = exec.get_queue(device_to_use);
 	// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
 	if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
-		copy_with_kernel(queue, spec);
+		copy_with_kernel(queue, spec, exec.get_preferred_wg_size());
 	} else if(spec.properties & copy_properties::use_2D_copy) {
 #if SYCL_EXT_ONEAPI_MEMCPY2D > 0
 		const auto dst_ptr = spec.target_layout.base_ptr() + spec.target_layout.offset;

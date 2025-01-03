@@ -102,8 +102,8 @@ struct ExecutorFixture {
 TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "executor info dump", "[executor]") {
 	const auto info = exec.get_info();
 	CHECK(!info.empty());
-	utils::print_to_cerr(std::format("Executor info:\n{}", info));
-	utils::print_to_cerr("Tests will be included or excluded based on the available capabilities\n");
+	utils::print("Executor info:\n{}\n", info);
+	utils::print("Tests will be included or excluded based on the available capabilities\n");
 }
 
 TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "basic copies can be executed", "[executor]") {
@@ -202,8 +202,8 @@ TEST_CASE_PERSISTENT_FIXTURE(ExecutorFixture, "2D copies can be executed", "[exe
 	if(!copy_kernel_ok && props == copy_properties::use_kernel) { return; }
 
 	if(debug_print) {
-		utils::print_to_cerr(std::format("so: {:6}, sfl: {:6}, sfc: {:6}, sst: {:6}, td: {}, tff: {:6}, to: {:6}, cpp: {}", //
-		    source_offset, source_frag_length, source_frag_count, source_stride, tgt_device, target_frag_factor, target_offset, props));
+		utils::print("so: {:6}, sfl: {:6}, sfc: {:6}, sst: {:6}, td: {}, tff: {:6}, to: {:6}, cpp: {}", //
+		    source_offset, source_frag_length, source_frag_count, source_stride, tgt_device, target_frag_factor, target_offset, props);
 	}
 
 	const copy_spec spec{tgt_device, source_layout, device_id::d0, target_layout, props};

@@ -49,9 +49,17 @@ if(COPYLIB_CUDA)
   target_compile_definitions(copylib PUBLIC COPYLIB_CUDA)
 endif()
 
-add_executable(transfer_bench transfer_bench.cpp)
-add_sycl_to_target(TARGET transfer_bench SOURCES transfer_bench.cpp)
-set_target_properties(transfer_bench PROPERTIES CXX_STANDARD 20)
-target_link_libraries(transfer_bench PRIVATE copylib)
+SET(EXECUTABLES
+    transfer_bench
+    micro_bench
+)
+
+foreach(EXECUTABLE ${EXECUTABLES})
+    add_executable(${EXECUTABLE} ${EXECUTABLE}.cpp)
+    add_sycl_to_target(TARGET ${EXECUTABLE} SOURCES ${EXECUTABLE}.cpp)
+    set_target_properties(${EXECUTABLE} PROPERTIES CXX_STANDARD 20)
+    target_link_libraries(${EXECUTABLE} PRIVATE copylib)
+    target_compile_options(${EXECUTABLE} PRIVATE -Wall -Wextra -Wno-unknown-cuda-version)
+endforeach()
 
 add_subdirectory(tests)

@@ -12,6 +12,7 @@ SET(TEST_FILES
     backend_tests.cpp
     core_tests.cpp
     support_tests.cpp
+    utils_tests.cpp
 )
 
 if(AdaptiveCpp_FOUND)

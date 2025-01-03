@@ -67,7 +67,8 @@ struct data_layout {
 	int64_t stride = 0;
 
 	constexpr data_layout() = default;
-	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length) : base(base), offset(offset), fragment_length(fragment_length) {}
+	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length)
+	    : base(base), offset(offset), fragment_length(fragment_length), fragment_count(1), stride(fragment_length) {}
 	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length, int64_t fragment_count, int64_t stride)
 	    : base(base), offset(offset), fragment_length(fragment_length), fragment_count(fragment_count), stride(stride) {}
 
@@ -117,7 +118,8 @@ struct copy_spec {
 
 	copy_properties properties = copy_properties::none;
 
-	constexpr bool is_contiguous() const { return source_layout.unit_stride() && target_layout.unit_stride(); }
+	[[nodiscard]] constexpr bool is_contiguous() const { return source_layout.unit_stride() && target_layout.unit_stride(); }
+	[[nodiscard]] constexpr copy_spec with_properties(copy_properties p) const { return {source_device, source_layout, target_device, target_layout, p}; }
 
 	constexpr bool operator==(const copy_spec&) const = default;
 	constexpr bool operator!=(const copy_spec&) const = default;

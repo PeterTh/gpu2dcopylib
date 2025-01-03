@@ -18,6 +18,7 @@ class executor {
 	std::string get_sycl_impl_name() const;
 	bool is_2d_copy_available() const;
 	bool is_device_to_device_copy_available() const;
+	int32_t get_preferred_wg_size() const;
 	std::string get_info() const;
 
 	enum class possibility {
@@ -26,6 +27,7 @@ class executor {
 		needs_d2d_copy,
 	};
 
+	possibility can_copy(const copy_spec& spec) const;
 	possibility can_copy(const parallel_copy_set& spec) const;
 
 	void barrier();

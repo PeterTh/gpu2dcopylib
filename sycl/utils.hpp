@@ -1,11 +1,13 @@
 #pragma once
 
-#include <cassert> // IWYU pragma: keep (used in macro)
-#include <format>  // IWYU pragma: keep (for std::format used in macro)
+#include <algorithm>
 #include <functional>
-#include <memory>          // IWYU pragma: keep (for std::hash)
-#include <source_location> // IWYU pragma: keep (used in macro)
 #include <string_view>
+#include <vector>
+
+#include <cassert>         // IWYU pragma: keep (used in macro)
+#include <format>          // IWYU pragma: keep (for std::format used in macro)
+#include <source_location> // IWYU pragma: keep (used in macro)
 
 namespace copylib::utils {
 
@@ -22,17 +24,41 @@ size_t hash_args(const T& first, const Args&... args) {
 	return seed;
 }
 
-void print_to_cerr(std::string_view); // just to avoid including <iostream>
+// just to avoid including <iostream>
+void dump_to_cerr(std::string_view);
+void dump_to_cout(std::string_view);
+
+template <typename... Args>
+void err_print(std::format_string<Args...> fmt, Args&&... args) {
+	dump_to_cerr(std::format(fmt, std::forward<Args>(args)...));
+}
+template <typename... Args>
+void print(std::format_string<Args...> fmt, Args&&... args) {
+	dump_to_cout(std::format(fmt, std::forward<Args>(args)...));
+}
+inline void print(std::string_view str) { dump_to_cout(str); }
 
 std::vector<std::string> split(const std::string& str, char delim);
+
+template <typename T>
+T vector_median(const std::vector<T>& values) {
+	std::vector<T> sorted = values;
+	std::sort(sorted.begin(), sorted.end());
+	if(sorted.size() % 2 == 0) {
+		return (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2;
+	} else {
+		return sorted[sorted.size() / 2];
+	}
+}
+
 } // namespace copylib::utils
 
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \
 	do {                                                                                                                                                       \
 		const auto loc = std::source_location::current();                                                                                                      \
 		if(!(_expr)) {                                                                                                                                         \
-			copylib::utils::print_to_cerr(                                                                                                                     \
-			    std::format("Error: !{}\nIn {}:{} : {}\n=> {}", #_expr, loc.file_name(), loc.line(), loc.function_name(), std::format(__VA_ARGS__)));          \
+			copylib::utils::err_print(                                                                                                                         \
+			    "Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, loc.file_name(), loc.line(), loc.function_name(), std::format(__VA_ARGS__));                    \
 			assert(false);                                                                                                                                     \
 			std::exit(1);                                                                                                                                      \
 			__builtin_unreachable();                                                                                                                           \

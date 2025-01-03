@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <fstream>
-#include <iostream>
 #include <unordered_map>
 
 #include <cmath>
@@ -65,24 +64,13 @@ std::vector<std::pair<T, T>> generate_pairs(const std::vector<T>& values) {
 	return pairs;
 }
 
-template <typename T>
-T vector_median(const std::vector<T>& values) {
-	std::vector<T> sorted = values;
-	std::sort(sorted.begin(), sorted.end());
-	if(sorted.size() % 2 == 0) {
-		return (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2;
-	} else {
-		return sorted[sorted.size() / 2];
-	}
-}
-
-int main(int argc, char** argv) {
+int main(int, char**) {
 	// create an executor with a buffer size of 1 GB
 	constexpr int64_t buffer_size = 1024l * 1024l * 1024l * 1l;
 	executor exec(buffer_size);
 	constexpr int64_t max_copy_extent = buffer_size / 2;
 
-	std::cout << "Benchmark executor created:\n" << exec.get_info() << std::endl;
+	utils::print("Benchmark executor created:\n{}\n", exec.get_info());
 
 	benchmark_config config = {
 	    .device_pairs =
@@ -96,6 +84,7 @@ int main(int argc, char** argv) {
 	    .d2d_implementations = {d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target,
 	        d2d_implementation::host_staging_at_both},
 	    .chunk_sizes = {0, 1024 * 1024, 32 * 1024 * 1024, 128 * 1024 * 1024},
+	    .layouts = {},
 	};
 
 	// contiguous layouts up from 8 bytes to 512 MB
@@ -140,7 +129,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	std::cout << "Planned " << benchmark_specs.size() << " benchmarks with " << config.max_repetitions << " repetitions each" << std::endl;
+	utils::print("Planned {} benchmarks with {} repetitions each\n", benchmark_specs.size(), config.max_repetitions);
 
 	std::vector<std::pair<benchmark_spec, parallel_copy_set>> benchmarks;
 	uint64_t removed_due_to_d2d = 0, removed_due_to_two_d = 0;
@@ -161,9 +150,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	std::cout << "Will perform " << benchmarks.size() << " benchmarks (" << removed_due_to_d2d << " removed due to d2d, " << removed_due_to_two_d
-	          << " removed due to 2d)" << std::endl;
-
+	utils::print("Will perform {} benchmarks ({} removed due to d2d, {} removed due to 2d)\n", benchmarks.size(), removed_due_to_d2d, removed_due_to_two_d);
 
 	char hostname[256];
 	gethostname(hostname, 256);
@@ -187,20 +174,20 @@ int main(int argc, char** argv) {
 			completed++;
 			if(isatty(fileno(stdout))) {
 				if(completed % reporting_threshold == 0) {
-					std::cout << std::format("\rCompleted {:9} / {:9} runs ({:5.1f}%)", completed, total, 100.0 * completed / total) << std::flush;
+					utils::print("\rCompleted {:9} / {:9} runs ({:5.1f}%)", completed, total, 100.0 * completed / total);
 				}
 			} else {
 				// print a dot for every percent
-				if(completed % (total / 100) == 0) { std::cout << "." << std::flush; }
+				if(completed % (total / 100) == 0) { utils::print("."); }
 			}
 		}
 	}
-	std::cout << std::endl;
+	utils::print("\n");
 	log.close();
 
 	std::unordered_map<benchmark_spec, double> median_times, median_gigabytes_per_second, mean_times, time_stddevs;
 	for(const auto& [spec, durations] : results) {
-		const auto median = vector_median(durations);
+		const auto median = utils::vector_median(durations);
 		using namespace std::chrono_literals;
 		const auto time_seconds = median / 1.0s;
 		median_times[spec] = time_seconds;
