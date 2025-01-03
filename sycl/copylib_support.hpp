@@ -37,6 +37,20 @@ struct hash<copylib::copy_plan> {
 		return val;
 	}
 };
+template <>
+struct hash<copylib::copy_type> {
+	size_t operator()(const copylib::copy_type& type) const { return hash<int>{}(static_cast<int>(type)); }
+};
+template <>
+struct hash<copylib::d2d_implementation> {
+	size_t operator()(const copylib::d2d_implementation& impl) const { return hash<int>{}(static_cast<int>(impl)); }
+};
+template <>
+struct hash<copylib::copy_strategy> {
+	size_t operator()(const copylib::copy_strategy& strat) const {
+		return copylib::utils::hash_args(strat.type, strat.properties, strat.d2d, strat.chunk_size);
+	}
+};
 
 // make types format-printable (and ostream for Catch2)
 template <>

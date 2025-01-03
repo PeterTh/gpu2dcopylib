@@ -20,6 +20,16 @@ class executor {
 	bool is_device_to_device_copy_available() const;
 	std::string get_info() const;
 
+	enum class possibility {
+		possible,
+		needs_2d_copy,
+		needs_d2d_copy,
+	};
+
+	possibility can_copy(const parallel_copy_set& spec) const;
+
+	void barrier();
+
   private:
 	device_list devices;
 	std::vector<sycl::device> gpu_devices;

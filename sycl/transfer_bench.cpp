@@ -1,148 +1,237 @@
 #include "copylib.hpp" // IWYU pragma: keep
 
 #include <chrono>
-#include <cstdio>
+#include <fstream>
 #include <iostream>
+#include <unordered_map>
+
+#include <cmath>
+#include <cstdio>
 #include <sched.h>
+#include <unistd.h>
 
 using namespace copylib;
 
+struct benchmark_layout {
+	int64_t num_fragments;
+	int64_t fragment_length;
+	int64_t stride;
+};
+
+struct benchmark_device {
+	device_id id;
+	bool on_host;
+	device_id get_exec_device() const { return on_host ? device_id::host : id; }
+};
+
+namespace d {
+constexpr benchmark_device gpu(int64_t idx) { return {static_cast<device_id>(idx), false}; }
+constexpr benchmark_device host(int64_t idx) { return {static_cast<device_id>(idx), true}; }
+} // namespace d
+
+struct benchmark_config {
+	int64_t max_repetitions = 10;
+	std::vector<std::pair<benchmark_device, benchmark_device>> device_pairs;
+	std::vector<copy_type> types;
+	std::vector<copy_properties> properties;
+	std::vector<d2d_implementation> d2d_implementations;
+	std::vector<int64_t> chunk_sizes;
+	std::vector<benchmark_layout> layouts;
+};
+
+struct benchmark_spec {
+	copy_spec spec;
+	copy_strategy strat;
+
+	constexpr bool operator==(const benchmark_spec&) const = default;
+	constexpr bool operator!=(const benchmark_spec&) const = default;
+};
+
+namespace std {
+template <>
+struct hash<benchmark_spec> {
+	size_t operator()(const benchmark_spec& p) const { return utils::hash_args(p.spec, p.strat); }
+};
+} // namespace std
+
+template <typename T>
+std::vector<std::pair<T, T>> generate_pairs(const std::vector<T>& values) {
+	std::vector<std::pair<T, T>> pairs;
+	for(const auto& a : values) {
+		for(const auto& b : values) {
+			pairs.push_back({a, b});
+		}
+	}
+	return pairs;
+}
+
+template <typename T>
+T vector_median(const std::vector<T>& values) {
+	std::vector<T> sorted = values;
+	std::sort(sorted.begin(), sorted.end());
+	if(sorted.size() % 2 == 0) {
+		return (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2;
+	} else {
+		return sorted[sorted.size() / 2];
+	}
+}
+
 int main(int argc, char** argv) {
-	constexpr int total_bytes = 1024 * 1024 * 1024; // 1 GB
+	// create an executor with a buffer size of 1 GB
+	constexpr int64_t buffer_size = 1024l * 1024l * 1024l * 1l;
+	executor exec(buffer_size);
+	constexpr int64_t max_copy_extent = buffer_size / 2;
 
-	const int num_repeats = 5;
-	const int num_warmups = 2;
-	const int total_runs = num_repeats + num_warmups;
+	std::cout << "Benchmark executor created:\n" << exec.get_info() << std::endl;
 
-	const auto gpu_devices = sycl::device::get_devices(sycl::info::device_type::gpu);
+	benchmark_config config = {
+	    .device_pairs =
+	        {
+	            {d::gpu(0), d::host(0)},
+	            {d::host(0), d::gpu(0)},
+	            {d::gpu(0), d::gpu(1)},
+	        },
+	    .types = {copy_type::direct, copy_type::staged},
+	    .properties = {copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy},
+	    .d2d_implementations = {d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target,
+	        d2d_implementation::host_staging_at_both},
+	    .chunk_sizes = {0, 1024 * 1024, 32 * 1024 * 1024, 128 * 1024 * 1024},
+	};
 
-	// print device info
-	{
-		int i = 0;
-		for(const auto& device : gpu_devices) {
-			std::cout << std::format("Device {:2}: {}\n", i++, device.get_info<sycl::info::device::name>());
-		}
+	// contiguous layouts up from 8 bytes to 512 MB
+	for(int64_t i = 0; i < static_cast<int64_t>(log2(512 * 1024 * 1024)); i++) {
+		const int64_t fragment_length = 1 << i;
+		const int64_t stride = fragment_length;
+		const int64_t num_fragments = 1;
+		config.layouts.push_back({num_fragments, fragment_length, stride});
 	}
 
-	cpu_set_t prior_mask;
-	CPU_ZERO(&prior_mask);
-	COPYLIB_ENSURE(pthread_getaffinity_np(pthread_self(), sizeof(prior_mask), &prior_mask) == 0, "Failed to get CPU affinity");
-
-	// allocate queues and device buffers
-	int dev_id = 0;
-	for(const auto& device : gpu_devices) {
-		auto& dev = g_devices.emplace_back(sycl::queue(device));
-		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
-		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
-		COPYLIB_ENSURE(dev.dev_buffer != nullptr, "Failed to allocate device buffer");
-		COPYLIB_ENSURE(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
-
-		cpu_set_t mask_for_device;
-		CPU_ZERO(&mask_for_device);
-		CPU_SET(32 * dev_id, &mask_for_device); // TODO fix hardcoded NUMA <-> device mapping
-		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
-
-		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
-		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
-		COPYLIB_ENSURE(dev.host_buffer != nullptr, "Failed to allocate host buffer");
-		COPYLIB_ENSURE(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
-		// initialize data on host
-		for(int i = 0; i < total_bytes; i++) {
-			dev.host_buffer[i] = static_cast<std::byte>(i % 256);
-			dev.host_staging_buffer[i] = static_cast<std::byte>(i % 256);
-		}
-
-		dev_id++;
-	}
-	COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &prior_mask) == 0, "Failed to reset CPU affinity");
-
-	// transfer data from host to device, individually, contiguously
-	for(int i = 0; i < total_runs; i++) {
-		for(auto& dev : g_devices) {
-			{
-				dev.queue.wait();
-				const auto start = std::chrono::high_resolution_clock::now();
-				auto ev = dev.queue.memcpy(dev.dev_buffer, dev.host_buffer, total_bytes);
-				ev.wait();
-				const auto end = std::chrono::high_resolution_clock::now();
-				if(i >= num_warmups) { dev.linear_h_to_d_time += end - start; }
-			}
-
-			{
-				dev.queue.wait();
-				const auto start = std::chrono::high_resolution_clock::now();
-				auto ev = dev.queue.memcpy(dev.host_buffer, dev.dev_buffer, total_bytes);
-				ev.wait();
-				const auto end = std::chrono::high_resolution_clock::now();
-				if(i >= num_warmups) { dev.linear_d_to_h_time += end - start; }
-			}
-		}
+	// 2D layouts with at most 8 MB total size, and at most 8k fragments; fragment lengths from 8 bytes to 1 kB
+	for(int64_t i = 0; i < static_cast<int64_t>(log2(1024)); i++) {
+		const int64_t fragment_length = 1 << i;
+		const int64_t stride = 1024 * 16; // 16 kB stride
+		const int64_t num_fragments = std::min(std::min(8l * 1024l * 1024l / fragment_length, max_copy_extent / stride), 8 * 1024l);
+		config.layouts.push_back({num_fragments, fragment_length, stride});
 	}
 
-	// timing data for each pair of devices
-	std::vector<std::vector<std::pair<std::chrono::duration<double>, std::chrono::duration<double>>>> device_pair_times;
-	device_pair_times.resize(g_devices.size());
-	for(auto& v : device_pair_times) {
-		v.resize(g_devices.size());
-	}
-
-	// transfer data from device to device, individually, contiguously
-	for(int i = 0; i < total_runs; i++) {
-		for(size_t source_idx = 0; source_idx < g_devices.size(); ++source_idx) {
-			for(size_t target_idx = 0; target_idx < g_devices.size(); ++target_idx) {
-				auto& source = g_devices[source_idx];
-				auto& target = g_devices[target_idx];
-				if(source_idx == target_idx) { continue; }
-
-				{
-					source.queue.wait();
-					const auto start = std::chrono::high_resolution_clock::now();
-					auto ev = source.queue.memcpy(target.dev_buffer, source.dev_buffer, total_bytes);
-					ev.wait();
-					const auto end = std::chrono::high_resolution_clock::now();
-					if(i >= num_warmups) { device_pair_times[source_idx][target_idx].first += end - start; }
-				}
-
-				{
-					source.queue.wait();
-					const auto start = std::chrono::high_resolution_clock::now();
-					auto ev = source.queue.memcpy(source.dev_buffer, target.dev_buffer, total_bytes);
-					ev.wait();
-					const auto end = std::chrono::high_resolution_clock::now();
-					if(i >= num_warmups) { device_pair_times[source_idx][target_idx].second += end - start; }
+	std::vector<benchmark_spec> benchmark_specs;
+	for(const auto& device_pair : config.device_pairs) {
+		for(const auto& type : config.types) {
+			for(const auto& prop : config.properties) {
+				for(const auto& d2d_impl : config.d2d_implementations) {
+					for(const auto& chunk_size : config.chunk_sizes) {
+						for(const auto& layout : config.layouts) {
+							const auto src_dev = device_pair.first;
+							const auto tgt_dev = device_pair.second;
+							auto src_buffer = reinterpret_cast<intptr_t>(src_dev.on_host ? exec.get_host_buffer(src_dev.id) : exec.get_buffer(src_dev.id));
+							auto tgt_buffer = reinterpret_cast<intptr_t>(tgt_dev.on_host ? exec.get_host_buffer(tgt_dev.id) : exec.get_buffer(tgt_dev.id));
+							const copy_spec spec{
+							    src_dev.get_exec_device(),
+							    {src_buffer, 0, layout.fragment_length, layout.num_fragments, layout.stride},
+							    tgt_dev.get_exec_device(),
+							    {tgt_buffer, 0, layout.fragment_length, layout.num_fragments, layout.stride},
+							};
+							const copy_strategy strat{type, prop, d2d_impl, chunk_size};
+							benchmark_specs.emplace_back(spec, strat);
+						}
+					}
 				}
 			}
 		}
 	}
 
+	std::cout << "Planned " << benchmark_specs.size() << " benchmarks with " << config.max_repetitions << " repetitions each" << std::endl;
 
-	// output results
-	{
-		int i = 0;
-		for(const auto& dev : g_devices) {
-			std::cout << std::format("D{} H2D: {:10.2f} GB/s\n", i, (static_cast<double>(total_bytes) * num_repeats) / dev.linear_h_to_d_time.count() / 1e9);
-			std::cout << std::format("D{} D2H: {:10.2f} GB/s\n", i, (static_cast<double>(total_bytes) * num_repeats) / dev.linear_d_to_h_time.count() / 1e9);
-			i++;
-		}
+	std::vector<std::pair<benchmark_spec, parallel_copy_set>> benchmarks;
+	uint64_t removed_due_to_d2d = 0, removed_due_to_two_d = 0;
+	// manifest all the plans and ensure they are valid and executable on the current executor
+	for(const auto& spec : benchmark_specs) {
+		COPYLIB_ENSURE(spec.spec.source_layout.total_extent() <= exec.get_buffer_size(), "Source layout too large: {}", spec.spec.source_layout);
+		COPYLIB_ENSURE(spec.spec.target_layout.total_extent() <= exec.get_buffer_size(), "Target layout too large: {}", spec.spec.target_layout);
+		const auto copy_set = manifest_strategy(spec.spec, spec.strat, basic_staging_provider{});
+		COPYLIB_ENSURE(is_valid(copy_set), "Invalid copy set: {}\n  -> generated for copy\n     {}\n     with strategy {}", copy_set, spec.spec, spec.strat);
 
-		// output device to device time matrix
-		std::cout << "D2D matrix source -> dest:\n";
-		for(size_t source_idx = 0; source_idx < g_devices.size(); ++source_idx) {
-			for(size_t target_idx = 0; target_idx < g_devices.size(); ++target_idx) {
-				std::cout << std::format(
-				    "{:5.2f}, ", (static_cast<double>(total_bytes) * num_repeats) / device_pair_times[source_idx][target_idx].first.count() / 1e9);
-			}
-			std::cout << std::endl;
+		auto exec_possible = exec.can_copy(copy_set);
+		if(exec_possible == executor::possibility::needs_d2d_copy) {
+			removed_due_to_d2d++;
+		} else if(exec_possible == executor::possibility::needs_2d_copy) {
+			removed_due_to_two_d++;
+		} else {
+			benchmarks.emplace_back(spec, copy_set);
 		}
-		std::cout << "D2D matrix dest -> source:\n";
-		for(size_t source_idx = 0; source_idx < g_devices.size(); ++source_idx) {
-			for(size_t target_idx = 0; target_idx < g_devices.size(); ++target_idx) {
-				std::cout << std::format(
-				    "{:5.2f}, ", (static_cast<double>(total_bytes) * num_repeats) / device_pair_times[source_idx][target_idx].second.count() / 1e9);
-			}
-			std::cout << std::endl;
-		};
 	}
 
-	return 0;
+	std::cout << "Will perform " << benchmarks.size() << " benchmarks (" << removed_due_to_d2d << " removed due to d2d, " << removed_due_to_two_d
+	          << " removed due to 2d)" << std::endl;
+
+
+	char hostname[256];
+	gethostname(hostname, 256);
+	const auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+	const auto log_filename = std::format("benchmark_{}_{}.log", hostname, timestamp);
+	std::ofstream log(log_filename);
+
+	std::unordered_map<benchmark_spec, std::vector<std::chrono::high_resolution_clock::duration>> results;
+	int64_t completed = 0;
+	int64_t reporting_threshold = 10;
+	int64_t total = benchmarks.size() * config.max_repetitions;
+	for(int64_t i = 0; i < config.max_repetitions; i++) {
+		for(const auto& [spec, copy_set] : benchmarks) {
+			exec.barrier();
+			if(i == 0) log << spec.spec << " ==> " << copy_set << std::endl;
+			auto start = std::chrono::high_resolution_clock::now();
+			execute_copy(exec, copy_set);
+			exec.barrier();
+			auto end = std::chrono::high_resolution_clock::now();
+			results[spec].push_back(end - start);
+			completed++;
+			if(isatty(fileno(stdout))) {
+				if(completed % reporting_threshold == 0) {
+					std::cout << std::format("\rCompleted {:9} / {:9} runs ({:5.1f}%)", completed, total, 100.0 * completed / total) << std::flush;
+				}
+			} else {
+				// print a dot for every percent
+				if(completed % (total / 100) == 0) { std::cout << "." << std::flush; }
+			}
+		}
+	}
+	std::cout << std::endl;
+	log.close();
+
+	std::unordered_map<benchmark_spec, double> median_times, median_gigabytes_per_second, mean_times, time_stddevs;
+	for(const auto& [spec, durations] : results) {
+		const auto median = vector_median(durations);
+		using namespace std::chrono_literals;
+		const auto time_seconds = median / 1.0s;
+		median_times[spec] = time_seconds;
+		const auto total_bytes = spec.spec.source_layout.total_bytes();
+		const auto total_gigabytes = total_bytes / (1024.0 * 1024.0 * 1024.0);
+		median_gigabytes_per_second[spec] = total_gigabytes / time_seconds;
+		const auto mean = std::accumulate(durations.begin(), durations.end(), std::chrono::high_resolution_clock::duration(0)) / durations.size();
+		const auto mean_seconds = mean / 1.0s;
+		mean_times[spec] = mean_seconds;
+		const auto time_variance = std::accumulate(durations.begin(), durations.end(), 0.0, [&](double acc, const auto& dur) {
+			const auto dur_seconds = dur / 1.0s;
+			return acc + (dur_seconds - mean_seconds) * (dur_seconds - mean_seconds);
+		});
+		time_stddevs[spec] = std::sqrt(time_variance / durations.size());
+	}
+
+	const auto output_filename = std::format("benchmark_results_{}_{}.csv", hostname, timestamp);
+	std::fstream out(output_filename, std::ios::out | std::ios::trunc);
+	out << "source_device,target_device,copy_type,copy_properties,d2d_implementation,chunk_size,num_fragments,fragment_length,stride,median_time,mean_time,"
+	       "time_stddev,median_gigabytes_per_second\n";
+	for(const auto& [bench, _] : benchmarks) {
+		const auto& spec = bench.spec;
+		const auto& strat = bench.strat;
+		const auto& layout = spec.source_layout;
+		const auto& median_time = median_times[bench];
+		const auto& mean_time = mean_times[bench];
+		const auto& time_stddev = time_stddevs[bench];
+		const auto& gigs_per_second = median_gigabytes_per_second[bench];
+		out << std::format("{:4},{:4}", spec.source_device, spec.target_device)
+		    << std::format(",{:6},{:12},{:23},{:12}", strat.type, strat.properties, strat.d2d, strat.chunk_size)
+		    << std::format(",{:12},{:12},{:12},{:12.6f},{:12.6f},{:12.6f},{:12.6f}\n", layout.fragment_count, layout.fragment_length, layout.stride,
+		           median_time, mean_time, time_stddev, gigs_per_second);
+	}
 }

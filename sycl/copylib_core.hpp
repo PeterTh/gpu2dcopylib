@@ -119,8 +119,8 @@ struct copy_spec {
 
 	constexpr bool is_contiguous() const { return source_layout.unit_stride() && target_layout.unit_stride(); }
 
-	constexpr bool operator==(const copy_spec& other) const = default;
-	constexpr bool operator!=(const copy_spec& other) const = default;
+	constexpr bool operator==(const copy_spec&) const = default;
+	constexpr bool operator!=(const copy_spec&) const = default;
 };
 
 // a copy plan is a list of one or more copy specifications which need to be enacted subsequently to implement one semantic copy operation
@@ -157,6 +157,9 @@ struct copy_strategy {
 	copy_strategy(copy_type t, copy_properties p, d2d_implementation d) : type(t), properties(p), d2d(d) {}
 	copy_strategy(copy_type t, copy_properties p, int64_t c) : type(t), properties(p), chunk_size(c) {}
 	copy_strategy(copy_type t, copy_properties p, d2d_implementation d, int64_t c) : type(t), properties(p), d2d(d), chunk_size(c) {}
+
+	constexpr bool operator==(const copy_strategy&) const = default;
+	constexpr bool operator!=(const copy_strategy&) const = default;
 };
 
 // validate whether a given data layout is sound

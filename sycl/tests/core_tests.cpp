@@ -277,22 +277,31 @@ TEST_CASE("staging copy specs at the source end", "[staging]") {
 	}
 
 	SECTION("staging required") {
-		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const std::pair<device_id, device_id> devices = GENERATE(
+		    std::make_pair(device_id::d0, device_id::d1), std::make_pair(device_id::host, device_id::d0), std::make_pair(device_id::d0, device_id::host));
+		const auto src_dev = devices.first;
+		const auto tgt_dev = devices.second;
+		CAPTURE(src_dev, tgt_dev);
+
+		const copy_spec spec{src_dev, source_layout, tgt_dev, target_layout};
 		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
+
 		const copy_strategy strategy{copy_type::staged, props};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 2);
 		CHECK(copy_plan.front().properties == props);
-		CHECK(copy_plan.front().source_device == device_id::d0);
+		CHECK(copy_plan.front().source_device == src_dev);
 		CHECK(copy_plan.front().source_layout == source_layout);
-		CHECK(copy_plan.front().target_device == device_id::d0);
+		CHECK(copy_plan.front().target_device == src_dev);
 		CHECK(copy_plan.front().target_layout.unit_stride());
-		CHECK(copy_plan.front().target_layout.is_unplaced_staging());
+		// staged on the source device, but if the source is host, the staging is on the target device
+		const auto staging_device = src_dev == device_id::host ? tgt_dev : src_dev;
+		CHECK(copy_plan.front().target_layout.staging == staging_id{src_dev == device_id::host, staging_device, 42});
 		CHECK(copy_plan.back().properties == props);
-		CHECK(copy_plan.back().source_device == device_id::d0);
+		CHECK(copy_plan.back().source_device == src_dev);
 		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
-		CHECK(copy_plan.back().target_device == device_id::d1);
+		CHECK(copy_plan.back().target_device == tgt_dev);
 		CHECK(copy_plan.back().target_layout == target_layout);
 		CHECK(is_equivalent(copy_plan, spec));
 	}
@@ -320,22 +329,31 @@ TEST_CASE("staging copy specs at the target end", "[staging]") {
 	}
 
 	SECTION("staging required") {
-		const copy_spec spec{device_id::d0, source_layout, device_id::d1, target_layout};
+		const std::pair<device_id, device_id> devices = GENERATE(
+		    std::make_pair(device_id::d0, device_id::d1), std::make_pair(device_id::host, device_id::d0), std::make_pair(device_id::d0, device_id::host));
+		const auto src_dev = devices.first;
+		const auto tgt_dev = devices.second;
+		CAPTURE(src_dev, tgt_dev);
+
+		const copy_spec spec{src_dev, source_layout, tgt_dev, target_layout};
 		const copy_properties props = GENERATE(copy_properties::none, copy_properties::use_kernel);
 		CAPTURE(props);
+
 		const copy_strategy strategy{copy_type::staged, props};
 		const auto copy_plan = apply_staging(spec, strategy, test_staging_buffer_provider);
 		CHECK(copy_plan.size() == 2);
 		CHECK(copy_plan.front().properties == props);
-		CHECK(copy_plan.front().source_device == device_id::d0);
+		CHECK(copy_plan.front().source_device == src_dev);
 		CHECK(copy_plan.front().source_layout == source_layout);
-		CHECK(copy_plan.front().target_device == device_id::d1);
+		CHECK(copy_plan.front().target_device == tgt_dev);
 		CHECK(copy_plan.front().target_layout.unit_stride());
-		CHECK(copy_plan.front().target_layout.staging == staging_id{false, device_id::d1, 42}); // staged on d1 since that's not unit stride
+		// staged on the target device, but if the target is host, the staging is on the source device
+		const auto staging_device = tgt_dev == device_id::host ? src_dev : tgt_dev;
+		CHECK(copy_plan.front().target_layout.staging == staging_id{tgt_dev == device_id::host, staging_device, 42});
 		CHECK(copy_plan.back().properties == props);
-		CHECK(copy_plan.back().source_device == device_id::d1);
+		CHECK(copy_plan.back().source_device == tgt_dev);
 		CHECK(copy_plan.back().source_layout == copy_plan.front().target_layout);
-		CHECK(copy_plan.back().target_device == device_id::d1);
+		CHECK(copy_plan.back().target_device == tgt_dev);
 		CHECK(copy_plan.back().target_layout == target_layout);
 		CHECK(is_equivalent(copy_plan, spec));
 	}
@@ -391,7 +409,7 @@ TEST_CASE("Applying d2d implementations", "[d2d]") {
 		REQUIRE(copy_plan.size() == 2);
 		const staging_id expected_staging = staging_id{true, impl == d2d_implementation::host_staging_at_source ? device_id::d0 : device_id::d1, 42};
 		const data_layout expected_staged_layout = {
-		    expected_staging, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
+		    expected_staging, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.stride};
 		CHECK(copy_plan.front() == copy_spec{device_id::d0, src_layout, device_id::host, expected_staged_layout});
 		CHECK(copy_plan.back() == copy_spec{device_id::host, expected_staged_layout, device_id::d1, tgt_layout});
 		CHECK(is_equivalent(copy_plan, spec));
@@ -402,10 +420,8 @@ TEST_CASE("Applying d2d implementations", "[d2d]") {
 		REQUIRE(copy_plan.size() == 3);
 		const staging_id staging_id_1{true, device_id::d0, 42};
 		const staging_id staging_id_2{true, device_id::d1, 42};
-		const data_layout staged_layout_1 = {
-		    staging_id_1, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
-		const data_layout staged_layout_2 = {
-		    staging_id_2, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.fragment_length};
+		const data_layout staged_layout_1 = {staging_id_1, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.stride};
+		const data_layout staged_layout_2 = {staging_id_2, src_layout.offset, src_layout.fragment_length, src_layout.fragment_count, src_layout.stride};
 		CHECK(copy_plan.front() == copy_spec{device_id::d0, src_layout, device_id::host, staged_layout_1});
 		CHECK(copy_plan[1] == copy_spec{device_id::host, staged_layout_1, device_id::host, staged_layout_2});
 		CHECK(copy_plan.back() == copy_spec{device_id::host, staged_layout_2, device_id::d1, tgt_layout});

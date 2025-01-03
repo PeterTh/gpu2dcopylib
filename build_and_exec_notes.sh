@@ -1,6 +1,8 @@
 
 # on GPUC3 (NV)
 
+CUDA_VISIBLE_DEVICES=2,3 COPYLIB_ALLOC_CPU_IDS=64,64
+
 # dev
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=~/installs/simsycl/
 
@@ -20,3 +22,5 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/intel/onea
 
 . /opt/intel/oneapi/setvars.sh
 env ONEAPI_DEVICE_SELECTOR=level_zero:*
+
+export COPYLIB_ALLOC_CPU_IDS=2,3

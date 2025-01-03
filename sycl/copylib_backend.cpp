@@ -99,6 +99,28 @@ std::string executor::get_info() const {
 	return ret;
 }
 
+executor::possibility executor::can_copy(const parallel_copy_set& cset) const {
+	const bool d2d = is_device_to_device_copy_available();
+	const bool two_d = is_2d_copy_available();
+	for(const auto& plan : cset) {
+		for(const auto& spec : plan) {
+			const auto d2d_copy = spec.source_device != spec.target_device && spec.source_device != device_id::host && spec.target_device != device_id::host;
+			if(d2d_copy) {
+				if(spec.properties & copy_properties::use_kernel) { return possibility::needs_d2d_copy; } // TODO need to be more specific here later
+				if(!d2d) { return possibility::needs_d2d_copy; }
+			}
+			if(!two_d && (spec.properties & copy_properties::use_2D_copy)) { return possibility::needs_2d_copy; }
+		}
+	}
+	return possibility::possible;
+}
+
+void executor::barrier() {
+	for(auto& dev : devices) {
+		dev.queue.wait_and_throw();
+	}
+}
+
 executor::executor(int64_t buffer_size) : buffer_size(buffer_size) {
 #ifdef SIMSYCL_VERSION
 	auto sys_cfg = simsycl::get_default_system_config();

@@ -250,7 +250,7 @@ namespace {
 		if(strategy.properties & copy_properties::use_2D_copy) {
 			ret.fragment_length = spec.fragment_length;
 			ret.fragment_count = spec.fragment_count;
-			ret.stride = layout.fragment_length;
+			ret.stride = spec.fragment_length;
 		}
 		return ret;
 	}
@@ -270,8 +270,10 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	// if the source is not unit stride, we need to stage the source
 	std::optional<copy_spec> source_staging_copy;
 	if(!spec.source_layout.unit_stride()) {
-		COPYLIB_ENSURE(spec.source_device != device_id::host, "Cannot stage source from host: {}", spec);
-		const auto source_staging_buffer = staging_provider(spec.source_device, false, spec.source_layout.total_bytes());
+		// TODO this fallback to d0 is not a great solution; should look at entire plan
+		const auto device_id_for_staging =
+		    spec.source_device != device_id::host ? spec.source_device : (spec.target_device != device_id::host ? spec.target_device : device_id::d0);
+		const auto source_staging_buffer = staging_provider(device_id_for_staging, spec.source_device == device_id::host, spec.source_layout.total_bytes());
 		const data_layout staged_source_layout =
 		    create_2D_staging_layout(strategy, {source_staging_buffer, 0, spec.source_layout.total_bytes()}, spec.source_layout);
 		source_staging_copy.emplace(spec.source_device, spec.source_layout, spec.source_device, staged_source_layout, strategy.properties);
@@ -281,8 +283,10 @@ copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, co
 	// if the target is not unit stride, we need to unstage the target
 	std::optional<copy_spec> target_unstaging_copy;
 	if(!spec.target_layout.unit_stride()) {
-		COPYLIB_ENSURE(spec.target_device != device_id::host, "Cannot unstage target to host: {}", spec);
-		const auto target_staging_buffer = staging_provider(spec.target_device, false, spec.target_layout.total_bytes());
+		// TODO this fallback to d0 is not a great solution; should look at entire plan
+		const auto device_id_for_staging =
+		    spec.target_device != device_id::host ? spec.target_device : (spec.source_device != device_id::host ? spec.source_device : device_id::d0);
+		const auto target_staging_buffer = staging_provider(device_id_for_staging, spec.target_device == device_id::host, spec.target_layout.total_bytes());
 		const data_layout staged_target_layout =
 		    create_2D_staging_layout(strategy, {target_staging_buffer, 0, spec.target_layout.total_bytes()}, spec.target_layout);
 		target_unstaging_copy.emplace(spec.target_device, staged_target_layout, spec.target_device, spec.target_layout, strategy.properties);
@@ -333,7 +337,7 @@ copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementati
 			case d2d_implementation::host_staging_at_source: {
 				const auto staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.total_bytes());
 				const data_layout staged_layout = {
-				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.stride};
 				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
 				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
 				break;
@@ -341,7 +345,7 @@ copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementati
 			case d2d_implementation::host_staging_at_target: {
 				const auto staging_buffer = staging_provider(spec.target_device, true, spec.source_layout.total_bytes());
 				const data_layout staged_layout = {
-				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				    staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.stride};
 				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_layout, spec.properties);
 				new_plan.emplace_back(device_id::host, staged_layout, spec.target_device, spec.target_layout, spec.properties);
 				break;
@@ -349,11 +353,11 @@ copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementati
 			case d2d_implementation::host_staging_at_both: {
 				const auto source_staging_buffer = staging_provider(spec.source_device, true, spec.source_layout.total_bytes());
 				const data_layout staged_source_layout = {
-				    source_staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.fragment_length};
+				    source_staging_buffer, 0, spec.source_layout.fragment_length, spec.source_layout.fragment_count, spec.source_layout.stride};
 				new_plan.emplace_back(spec.source_device, spec.source_layout, device_id::host, staged_source_layout, spec.properties);
 				const auto target_staging_buffer = staging_provider(spec.target_device, true, spec.target_layout.total_bytes());
 				const data_layout staged_target_layout = {
-				    target_staging_buffer, 0, spec.target_layout.fragment_length, spec.target_layout.fragment_count, spec.target_layout.fragment_length};
+				    target_staging_buffer, 0, spec.target_layout.fragment_length, spec.target_layout.fragment_count, spec.target_layout.stride};
 				new_plan.emplace_back(device_id::host, staged_source_layout, device_id::host, staged_target_layout, spec.properties);
 				new_plan.emplace_back(device_id::host, staged_target_layout, spec.target_device, spec.target_layout, spec.properties);
 				break;
