@@ -20,6 +20,7 @@ if(AdaptiveCpp_FOUND)
     add_executable(all_tests ${TEST_FILES})
     add_sycl_to_target(TARGET all_tests SOURCES ${TEST_FILES})
     target_link_libraries(all_tests PRIVATE copylib Catch2::Catch2WithMain)
+    target_compile_options(all_tests PRIVATE -Wall -Wextra -Wno-unknown-cuda-version)
     set_target_properties(all_tests PROPERTIES CXX_STANDARD 20)
 else()
     # for each test file, build an object library, an executable, and add the library to the list of objects

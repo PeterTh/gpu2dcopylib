@@ -67,7 +67,7 @@ std::vector<std::pair<T, T>> generate_pairs(const std::vector<T>& values) {
 int main(int, char**) {
 	// create an executor with a buffer size of 1 GB
 	constexpr int64_t buffer_size = 1024l * 1024l * 1024l * 1l;
-	executor exec(buffer_size);
+	executor exec(buffer_size, 2);
 	constexpr int64_t max_copy_extent = buffer_size / 2;
 
 	utils::print("Benchmark executor created:\n{}\n", exec.get_info());

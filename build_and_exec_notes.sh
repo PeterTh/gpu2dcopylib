@@ -1,13 +1,17 @@
 
 # on GPUC3 (NV)
 
-CUDA_VISIBLE_DEVICES=2,3 COPYLIB_ALLOC_CPU_IDS=64,64
+export CUDA_VISIBLE_DEVICES=2,3
+export COPYLIB_ALLOC_CPU_IDS=64,64
 
 # dev
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=~/installs/simsycl/
 
 # ACPP
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=~/installs/AdaptiveCpp/ -DACPP_TARGETS=cuda:sm_86
+
+# ACPP generic
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=~/installs/AdaptiveCpp-generic/ -DACPP_TARGETS=generic -DCMAKE_CXX_COMPILER=clang++-18
 
 # DPCPP NV
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/intel/oneapi/compiler/latest/ -DCMAKE_CXX_COMPILER=/opt/intel/oneapi/compiler/latest/bin/icpx -DCMAKE_CXX_FLAGS="-fsycl -fsyc

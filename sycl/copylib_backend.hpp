@@ -6,7 +6,7 @@ namespace copylib {
 
 class executor {
   public:
-	executor(int64_t buffer_size);
+	executor(int64_t buffer_size, int64_t devices_needed);
 	sycl::queue& get_queue(device_id id);
 	std::byte* get_buffer(device_id id);
 	std::byte* get_staging_buffer(device_id id);
@@ -39,7 +39,7 @@ class executor {
 };
 
 
-device_id execute_copy(executor& exec, const copy_spec& spec);
+device_id execute_copy(executor& exec, const copy_spec& spec, const device_id last_device = device_id::count);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 

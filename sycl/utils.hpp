@@ -51,6 +51,11 @@ T vector_median(const std::vector<T>& values) {
 	}
 }
 
+template <typename T>
+T vector_min(const std::vector<T>& values) {
+	return *std::min_element(values.begin(), values.end());
+}
+
 } // namespace copylib::utils
 
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \
