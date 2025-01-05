@@ -117,7 +117,7 @@ struct formatter<copylib::d2d_implementation> : formatter<string> {
 template <>
 struct formatter<copylib::copy_strategy> : formatter<string> {
 	auto format(const copylib::copy_strategy& p, format_context& ctx) const {
-		return formatter<string>::format(std::format("strategy({}({}), chunk:{})", p.type, p.properties, p.chunk_size), ctx);
+		return formatter<string>::format(std::format("strategy({}, {}, d2d:{}, chunk:{})", p.type, p.properties, p.d2d, p.chunk_size), ctx);
 	}
 };
 template <>

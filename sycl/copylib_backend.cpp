@@ -18,6 +18,8 @@
 
 #include <thread>
 
+#include <vendor/bs_thread_pool/bs_thread_pool.hpp>
+
 namespace copylib {
 
 std::string executor::get_sycl_impl_name() const {
@@ -102,8 +104,9 @@ int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 std::string executor::get_info() const {
 	auto ret = std::format("Copylib executor with {} device(s) and buffer size {} bytes\n", devices.size(), buffer_size);
 	ret += std::format("SYCL implementation: {}\n", get_sycl_impl_name());
-	ret += std::format("  2D copy available: {}\n", is_2d_copy_available());
-	ret += std::format(" D2D copy available: {}\n", is_device_to_device_copy_available());
+	ret += std::format("2D copy available: {}   D2D copy available: {}   Preferred wg size: {}\n", //
+	    is_2d_copy_available(), is_device_to_device_copy_available(), get_preferred_wg_size());
+	ret += std::format("Using {} queues per device\n", get_queues_per_device());
 	for(size_t i = 0; i < devices.size(); i++) {
 		ret += std::format("    Device {:2}: {} [{}]", i, //
 		    gpu_devices[i].get_info<sycl::info::device::name>(), gpu_devices[i].get_info<sycl::info::device::vendor>());
@@ -136,11 +139,16 @@ executor::possibility executor::can_copy(const parallel_copy_set& cset) const {
 
 void executor::barrier() {
 	for(auto& dev : devices) {
-		dev.queue.wait_and_throw();
+		for(auto& q : dev.queues) {
+			q.wait_and_throw();
+		}
 	}
 }
 
-executor::executor(int64_t buffer_size, int64_t devices_needed) : buffer_size(buffer_size) {
+executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device) : buffer_size(buffer_size) {
+	COPYLIB_ENSURE(devices_needed > 0, "Need at least one device");
+	COPYLIB_ENSURE(queues_per_device > 0, "Need at least one queue per device");
+
 #ifdef SIMSYCL_VERSION
 	auto sys_cfg = simsycl::get_default_system_config();
 	sys_cfg.devices.emplace("gpu2", sys_cfg.devices.cbegin()->second);
@@ -170,9 +178,16 @@ executor::executor(int64_t buffer_size, int64_t devices_needed) : buffer_size(bu
 		    sycl::property::queue::AdaptiveCpp_coarse_grained_events{}
 #endif // ACPP_EXT_COARSE_GRAINED_EVENTS
 		};
-		auto& dev = devices.emplace_back(sycl::queue(device, queue_properties));
-		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
-		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, dev.queue);
+
+		std::vector<sycl::queue> queues;
+		for(int64_t i = 0; i < queues_per_device; i++) {
+			queues.emplace_back(sycl::queue(device, queue_properties));
+		}
+		auto& dev = devices.emplace_back(queues);
+		auto& q = dev.queues[0];
+
+		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, q);
+		dev.staging_buffer = sycl::malloc_device<std::byte>(total_bytes, q);
 		COPYLIB_ENSURE(dev.dev_buffer != nullptr, "Failed to allocate device buffer");
 		COPYLIB_ENSURE(dev.staging_buffer != nullptr, "Failed to allocate device staging buffer");
 
@@ -182,8 +197,8 @@ executor::executor(int64_t buffer_size, int64_t devices_needed) : buffer_size(bu
 		CPU_SET(cpu_id, &mask_for_device);
 		COPYLIB_ENSURE(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &mask_for_device) == 0, "Failed to set CPU affinity");
 
-		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
-		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, dev.queue);
+		dev.host_buffer = sycl::malloc_host<std::byte>(total_bytes, q);
+		dev.host_staging_buffer = sycl::malloc_host<std::byte>(total_bytes, q);
 		COPYLIB_ENSURE(dev.host_buffer != nullptr, "Failed to allocate host buffer");
 		COPYLIB_ENSURE(dev.host_staging_buffer != nullptr, "Failed to allocate host staging buffer");
 		// initialize data on host
@@ -198,17 +213,22 @@ executor::executor(int64_t buffer_size, int64_t devices_needed) : buffer_size(bu
 } // namespace copylib
 
 device::~device() {
-	queue.wait_and_throw();
+	for(auto& q : queues) {
+		q.wait_and_throw();
+	}
 
-	sycl::free(dev_buffer, queue);
-	sycl::free(staging_buffer, queue);
-	sycl::free(host_buffer, queue);
-	sycl::free(host_staging_buffer, queue);
+	auto& q = queues[0];
+	sycl::free(dev_buffer, q);
+	sycl::free(staging_buffer, q);
+	sycl::free(host_buffer, q);
+	sycl::free(host_staging_buffer, q);
 }
 
-sycl::queue& executor::get_queue(device_id id) {
+sycl::queue& executor::get_queue(device_id id, int64_t queue_idx) {
 	COPYLIB_ENSURE(static_cast<int>(id) >= 0 && static_cast<size_t>(id) < devices.size(), "Invalid device id: {} ({} device(s) available)", id, devices.size());
-	return devices[static_cast<int>(id)].queue;
+	auto& queues = devices[static_cast<int>(id)].queues;
+	COPYLIB_ENSURE(queue_idx >= 0 && static_cast<size_t>(queue_idx) < queues.size(), "Invalid queue idx: {} ({} queue(s) available)", queue_idx, queues.size());
+	return queues[queue_idx];
 }
 
 std::byte* executor::get_buffer(device_id id) {
@@ -337,8 +357,9 @@ void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, 
 	}
 }
 
-device_id execute_copy(executor& exec, const copy_spec& spec, const device_id last_device) {
+executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, const executor::target last_target) {
 	constexpr bool debug = false;
+	const device_id last_device = last_target.did;
 	if(debug) utils::err_print("{}:\n  -> last_device is {}\n", spec, last_device);
 
 	//  for host <-> host copies, use memcpy
@@ -350,16 +371,19 @@ device_id execute_copy(executor& exec, const copy_spec& spec, const device_id la
 		}
 		copy_via_repeated_1D_copies(
 		    [](const std::byte* src, std::byte* tgt, int64_t length) { std::memcpy(tgt, src, length); }, spec.source_layout, spec.target_layout);
-		return device_id::host;
+		return {device_id::host, 0};
 	}
 
 	const device_id device_to_use = spec.source_device == device_id::host ? spec.target_device : spec.source_device;
-	auto& queue = exec.get_queue(device_to_use);
+	const executor::target target{device_to_use, queue_idx};
+
 	if(debug) utils::err_print("  -> performing copy on queue for device {}\n", device_to_use);
-	if(last_device != device_to_use && last_device != device_id::count && last_device != device_id::host) {
+	if(last_target != target && last_device != device_id::count && last_device != device_id::host) {
 		// utils::err_print("  -> waiting on {}\n", last_device);
-		exec.get_queue(last_device).wait_and_throw();
+		exec.get_queue(last_target).wait_and_throw();
 	}
+
+	auto& queue = exec.get_queue(target);
 
 	// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
 	if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
@@ -396,7 +420,7 @@ device_id execute_copy(executor& exec, const copy_spec& spec, const device_id la
 		copy_via_repeated_1D_copies(
 		    [&](const std::byte* src, std::byte* tgt, int64_t length) { queue.copy(src, tgt, length); }, spec.source_layout, spec.target_layout);
 	}
-	return device_to_use;
+	return target;
 }
 
 class staging_fulfiller {
@@ -457,26 +481,72 @@ class staging_fulfiller {
 	std::unordered_map<decltype(staging_id::index), staging_info> staging_buffers;
 };
 
-void execute_plan_impl(executor& exec, const copy_plan& plan, staging_fulfiller& fulfiller) {
-	device_id last_device = device_id::count;
+class noop_fulfiller {
+  public:
+	void fulfill(copy_spec&) {}
+};
+
+template <typename T>
+concept StagingFulfiller = requires(T f, copy_spec c) {
+	{ f.fulfill(c) };
+};
+
+void execute_plan_impl(executor& exec, const copy_plan& plan, StagingFulfiller auto& fulfiller, int64_t queue_idx) {
+	executor::target last_target = executor::null_target;
 	for(auto spec : plan) {
 		fulfiller.fulfill(spec);
-		last_device = execute_copy(exec, spec, last_device);
+		last_target = execute_copy(exec, spec, queue_idx, last_target);
 	}
 }
 
 void execute_copy(executor& exec, const copy_plan& plan) {
 	staging_fulfiller fulfiller(exec);
-	execute_plan_impl(exec, plan, fulfiller);
+	execute_plan_impl(exec, plan, fulfiller, 0);
 }
+
 
 void execute_copy(executor& exec, const parallel_copy_set& set) {
 	// TODO: smarter staging reuse
-	// TODO: actual parallelization
+	// TODO make this better and more testable:
+	//      - have a seperate type for executable copy sets, which are already staged and split into appropriate parts
+	//      - test the splitting and staging logic separately
+	const int64_t parts_count = exec.get_queues_per_device();
+	static BS::thread_pool pool(parts_count);
+
+	const int64_t total_plans = set.size();
+
 	staging_fulfiller fulfiller(exec);
-	for(const auto& plan : set) {
-		execute_plan_impl(exec, plan, fulfiller);
+	std::vector<parallel_copy_set> fulfilled_sets(parts_count);
+	std::vector<std::future<void>> futures;
+	int64_t current_set_idx = 0;
+	int64_t sets_added_to_current = 0;
+	std::atomic<int64_t> plans_executed = 0;
+	for(auto& plan : set) {
+		copy_plan fulfilled_plan = plan;
+		for(auto& spec : fulfilled_plan) {
+			fulfiller.fulfill(spec);
+		}
+		fulfilled_sets[current_set_idx].insert(fulfilled_plan);
+		sets_added_to_current++;
+
+		const int64_t sets_to_add_to_current = total_plans / parts_count //
+		                                       + ((current_set_idx < total_plans % parts_count) ? 1 : 0);
+		if(sets_added_to_current >= sets_to_add_to_current) {
+			futures.push_back(pool.submit_task([&, current_set_idx]() {
+				noop_fulfiller ful;
+				for(auto& plan : fulfilled_sets[current_set_idx]) {
+					execute_plan_impl(exec, plan, ful, current_set_idx);
+					plans_executed++;
+				}
+			}));
+			current_set_idx++;
+			sets_added_to_current = 0;
+		}
 	}
+	for(auto& f : futures) {
+		f.wait();
+	}
+	COPYLIB_ENSURE(plans_executed == total_plans, "Not all plans executed ({} of {})", plans_executed.load(), total_plans);
 }
 
 } // namespace copylib

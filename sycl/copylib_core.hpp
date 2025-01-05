@@ -9,21 +9,6 @@
 
 namespace copylib {
 
-struct device {
-	sycl::queue queue;
-	std::byte* dev_buffer = nullptr;
-	std::byte* staging_buffer = nullptr;
-	std::byte* host_buffer = nullptr;
-	std::byte* host_staging_buffer = nullptr;
-	std::chrono::duration<double> linear_h_to_d_time{0};
-	std::chrono::duration<double> linear_d_to_h_time{0};
-
-	~device();
-};
-
-using device_list = std::vector<device>;
-inline device_list g_devices;
-
 enum class device_id : int16_t {
 	host = -1,
 	d0 = 0,
@@ -71,6 +56,8 @@ struct data_layout {
 	    : base(base), offset(offset), fragment_length(fragment_length), fragment_count(1), stride(fragment_length) {}
 	constexpr data_layout(intptr_t base, int64_t offset, int64_t fragment_length, int64_t fragment_count, int64_t stride)
 	    : base(base), offset(offset), fragment_length(fragment_length), fragment_count(fragment_count), stride(stride) {}
+	constexpr data_layout(intptr_t base, const data_layout& layout)
+	    : base(base), offset(layout.offset), fragment_length(layout.fragment_length), fragment_count(layout.fragment_count), stride(layout.stride) {}
 
 	data_layout(staging_id staging, int64_t offset, int64_t fragment_length)
 	    : staging(staging), offset(offset), fragment_length(fragment_length), stride(fragment_length) {}

@@ -86,7 +86,7 @@ TEST_CASE("formatting of types", "[format]") {
 	}
 	SECTION("copy_strategy") {
 		const copy_strategy strategy{copy_type::direct, copy_properties::use_kernel, 256};
-		CHECK(std::format("{}", strategy) == "strategy(direct(use_kernel), chunk:256)");
+		CHECK(std::format("{}", strategy) == "strategy(direct, use_kernel, d2d:direct, chunk:256)");
 	}
 	SECTION("copy_plan") {
 		const copy_spec spec{device_id::d0, {0, 0, 1024, 1, 1024}, device_id::d1, {0, 0, 1024, 1, 1024}};

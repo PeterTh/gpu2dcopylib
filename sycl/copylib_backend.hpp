@@ -4,16 +4,41 @@
 
 namespace copylib {
 
+struct device {
+	std::vector<sycl::queue> queues;
+	std::byte* dev_buffer = nullptr;
+	std::byte* staging_buffer = nullptr;
+	std::byte* host_buffer = nullptr;
+	std::byte* host_staging_buffer = nullptr;
+
+	~device();
+};
+
+using device_list = std::vector<device>;
+
 class executor {
   public:
-	executor(int64_t buffer_size, int64_t devices_needed);
-	sycl::queue& get_queue(device_id id);
+	struct target {
+		device_id did;
+		int64_t queue_idx;
+
+		bool operator==(const target& other) const = default;
+		bool operator!=(const target& other) const = default;
+	};
+	static constexpr target null_target = target{device_id::count, 0};
+
+	executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device = 1);
+
+	sycl::queue& get_queue(device_id id, int64_t queue_idx = 0);
+	sycl::queue& get_queue(const target& tgt) { return get_queue(tgt.did, tgt.queue_idx); }
+
 	std::byte* get_buffer(device_id id);
 	std::byte* get_staging_buffer(device_id id);
 	std::byte* get_host_buffer(device_id id);
 	std::byte* get_host_staging_buffer(device_id id);
 
 	int64_t get_buffer_size() const { return buffer_size; }
+	int64_t get_queues_per_device() const { return devices.front().queues.size(); }
 
 	std::string get_sycl_impl_name() const;
 	bool is_2d_copy_available() const;
@@ -39,7 +64,7 @@ class executor {
 };
 
 
-device_id execute_copy(executor& exec, const copy_spec& spec, const device_id last_device = device_id::count);
+executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, const executor::target last_target = executor::null_target);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 

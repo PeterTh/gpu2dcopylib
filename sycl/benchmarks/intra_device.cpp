@@ -42,8 +42,8 @@ int main(int, char**) {
 			COPYLIB_ENSURE(exec.can_copy(cur_spec) == executor::possibility::possible, "Cannot execute copy with spec");
 			exec.barrier();
 			auto start = clock::now();
-			const auto dev = execute_copy(exec, cur_spec);
-			exec.get_queue(dev).wait_and_throw();
+			const auto tgt = execute_copy(exec, cur_spec);
+			exec.get_queue(tgt).wait_and_throw();
 			auto end = clock::now();
 			durations[p].push_back(end - start);
 		}
