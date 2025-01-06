@@ -171,6 +171,8 @@ void executor::barrier() {
 	}
 }
 
+executor::executor(int64_t buffer_size) : executor(buffer_size, sycl::device::get_devices(sycl::info::device_type::gpu).size(), 1) {}
+
 executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device) : buffer_size(buffer_size) {
 	COPYLIB_ENSURE(devices_needed > 0, "Need at least one device");
 	COPYLIB_ENSURE(queues_per_device > 0, "Need at least one queue per device");

@@ -28,6 +28,7 @@ class executor {
 	};
 	static constexpr target null_target = target{device_id::count, 0};
 
+	executor(int64_t buffer_size);
 	executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_per_device = 1);
 
 	sycl::queue& get_queue(device_id id, int64_t queue_idx = 0);
