@@ -16,9 +16,10 @@
 #include <cuda_runtime.h>
 #endif
 
+#include <string>
 #include <thread>
 
-#include <vendor/bs_thread_pool/bs_thread_pool.hpp>
+#include <bs_thread_pool/bs_thread_pool.hpp>
 
 namespace copylib {
 
