@@ -66,9 +66,21 @@ bool executor::is_device_to_device_copy_available() const {
 bool executor::is_peer_memory_access_available() const {
 #if defined(SIMSYCL_VERSION)
 	return true;
-#elif defined(SYCL_LANGUAGE_VERSION)
-	// TODO implement
-	return false;
+#elif defined(SYCL_LANGUAGE_VERSION) && defined(__INTEL_LLVM_COMPILER)
+	static bool available = [&] {
+		for(size_t dev_idx_a = 0; dev_idx_a < devices.size(); dev_idx_a++) {
+			for(size_t dev_idx_b = 0; dev_idx_b < devices.size(); dev_idx_b++) {
+				if(dev_idx_a == dev_idx_b) { continue; }
+				if(devices[dev_idx_a].dev.ext_oneapi_can_access_peer(devices[dev_idx_b].dev)) {
+					devices[dev_idx_a].dev.ext_oneapi_enable_peer_access(devices[dev_idx_b].dev);
+				} else {
+					return false;
+				}
+			}
+		}
+		return true;
+	}();
+	return available;
 #else
 	return false;
 #endif
@@ -117,8 +129,8 @@ int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 std::string executor::get_info() const {
 	auto ret = std::format("Copylib executor with {} device(s) and buffer size {} bytes\n", devices.size(), buffer_size);
 	ret += std::format("SYCL implementation: {}\n", get_sycl_impl_name());
-	ret += std::format("2D copy available: {}   D2D copy available: {}   Preferred wg size: {}\n", //
-	    is_2d_copy_available(), is_device_to_device_copy_available(), get_preferred_wg_size());
+	ret += std::format("2D copy: {}    D2D copy: {}    Peer access: {}    Preferred wg size: {}\n", //
+	    is_2d_copy_available(), is_device_to_device_copy_available(), is_peer_memory_access_available(), get_preferred_wg_size());
 	ret += std::format("Using {} queues per device\n", get_queues_per_device());
 	for(size_t i = 0; i < devices.size(); i++) {
 		ret += std::format("    Device {:2}: {} [{}]", i, //
@@ -202,7 +214,7 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 		for(int64_t i = 0; i < queues_per_device; i++) {
 			queues.emplace_back(sycl::queue(device, queue_properties));
 		}
-		auto& dev = devices.emplace_back(queues);
+		auto& dev = devices.emplace_back(device, queues);
 		auto& q = dev.queues[0];
 
 		dev.dev_buffer = sycl::malloc_device<std::byte>(total_bytes, q);

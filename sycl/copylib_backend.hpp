@@ -5,6 +5,7 @@
 namespace copylib {
 
 struct device {
+	sycl::device dev;
 	std::vector<sycl::queue> queues;
 	std::byte* dev_buffer = nullptr;
 	std::byte* staging_buffer = nullptr;
@@ -59,7 +60,7 @@ class executor {
 	void barrier();
 
   private:
-	device_list devices;
+	mutable device_list devices; // Mutable due to ext_oneapi_can_access_peer not being const; very ugly
 	std::vector<sycl::device> gpu_devices;
 	int64_t buffer_size;
 };
