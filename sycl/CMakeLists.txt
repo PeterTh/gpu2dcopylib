@@ -33,6 +33,7 @@ endif()
 SET(COPYLIB_SRC
     copylib_core.cpp
     copylib_backend.cpp
+    copylib_backend_kernels.cpp
     copylib_support.cpp
     utils.cpp
 )
