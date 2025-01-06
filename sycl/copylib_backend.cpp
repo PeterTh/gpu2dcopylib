@@ -61,6 +61,17 @@ bool executor::is_device_to_device_copy_available() const {
 #endif
 }
 
+bool executor::is_peer_memory_access_available() const {
+#if defined(SIMSYCL_VERSION)
+	return true;
+#elif defined(SYCL_LANGUAGE_VERSION)
+	// TODO implement
+	return false;
+#else
+	return false;
+#endif
+}
+
 int32_t executor::get_preferred_wg_size() const {
 	thread_local int32_t wg_size = -1;
 	if(wg_size == -1) {
@@ -173,10 +184,16 @@ executor::executor(int64_t buffer_size, int64_t devices_needed, int64_t queues_p
 	devices.reserve(gpu_devices.size());
 	int dev_id = 0;
 	for(const auto& device : gpu_devices) {
-		const sycl::property_list queue_properties = {sycl::property::queue::in_order{},
+		const sycl::property_list queue_properties = {
+		    sycl::property::queue::in_order{},
 #ifdef ACPP_EXT_COARSE_GRAINED_EVENTS
-		    sycl::property::queue::AdaptiveCpp_coarse_grained_events{}
+		    // minor perf improvement on AdaptiveCPP
+		    sycl::property::queue::AdaptiveCpp_coarse_grained_events{},
 #endif // ACPP_EXT_COARSE_GRAINED_EVENTS
+#ifdef SYCL_EXT_INTEL_QUEUE_IMMEDIATE_COMMAND_LIST
+		    // ~ 10% perf improvement on Intel GPUs in strided chunk copy set peak performance
+		    sycl::ext::intel::property::queue::immediate_command_list{},
+#endif // SYCL_EXT_INTEL_QUEUE_IMMEDIATE_COMMAND_LIST
 		};
 
 		std::vector<sycl::queue> queues;

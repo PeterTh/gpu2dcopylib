@@ -43,6 +43,7 @@ class executor {
 	std::string get_sycl_impl_name() const;
 	bool is_2d_copy_available() const;
 	bool is_device_to_device_copy_available() const;
+	bool is_peer_memory_access_available() const;
 	int32_t get_preferred_wg_size() const;
 	std::string get_info() const;
 
