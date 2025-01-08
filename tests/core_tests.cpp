@@ -137,7 +137,7 @@ TEST_CASE("chunking 1D operations", "[chunking]") {
 		for(int i = 0; i < 4; i++) {
 			const auto source_offset = i * 256 + extra_source_offset;
 			const auto target_offset = i * 256;
-			expected_copy_set.insert({{device_id::d0, {0, source_offset, 256, 1, 256}, device_id::d1, {0, target_offset, 256, 1, 256}}});
+			expected_copy_set.push_back({{device_id::d0, {0, source_offset, 256, 1, 256}, device_id::d1, {0, target_offset, 256, 1, 256}}});
 		}
 		CHECK(copy_set == expected_copy_set);
 	}
@@ -151,7 +151,7 @@ TEST_CASE("chunking 1D operations", "[chunking]") {
 			const auto source_offset = i * 400 + extra_source_offset;
 			const auto target_offset = i * 400;
 			const auto fragment_length = std::min(400, 1024 - i * 400);
-			expected_copy_set.insert({{                                                 //
+			expected_copy_set.push_back({{                                              //
 			    device_id::d0, {0, source_offset, fragment_length, 1, fragment_length}, //
 			    device_id::d1, {0, target_offset, fragment_length, 1, fragment_length}}});
 		}
@@ -192,7 +192,7 @@ TEST_CASE("chunking 2D operations, same fragment length", "[chunking]") {
 			const auto source_count = 256 / 8;
 			const auto target_offset = i * (256 / 8 * 96);
 			const auto target_count = 256 / 8;
-			expected_copy_set.insert({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 8, target_count, 96}}});
+			expected_copy_set.push_back({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 8, target_count, 96}}});
 		}
 		CHECK(copy_set == expected_copy_set);
 	}
@@ -207,7 +207,7 @@ TEST_CASE("chunking 2D operations, same fragment length", "[chunking]") {
 			const auto source_count = std::min(177 / 8, 64 - i * 177 / 8);
 			const auto target_offset = i * (177 / 8 * 96);
 			const auto target_count = std::min(177 / 8, 64 - i * 177 / 8);
-			expected_copy_set.insert({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 8, target_count, 96}}});
+			expected_copy_set.push_back({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 8, target_count, 96}}});
 		}
 		CHECK(copy_set == expected_copy_set);
 	}
@@ -229,7 +229,7 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 			const auto source_count = 256 / 8;
 			const auto target_offset = i * (256 / 32 * 96);
 			const auto target_count = 256 / 32;
-			expected_copy_set.insert({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 32, target_count, 96}}});
+			expected_copy_set.push_back({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 32, target_count, 96}}});
 		}
 
 		CHECK(copy_set == expected_copy_set);
@@ -246,7 +246,7 @@ TEST_CASE("chunking 2D operations, different fragment length", "[chunking]") {
 			const auto fragment_size_multiplier = target.fragment_length / source.fragment_length;
 			const auto source_offset = i * (177 / 32 * fragment_size_multiplier * 32);
 			const auto source_count = target_count * fragment_size_multiplier;
-			expected_copy_set.insert({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 32, target_count, 96}}});
+			expected_copy_set.push_back({{device_id::d0, {0, source_offset, 8, source_count, 32}, device_id::d1, {0, target_offset, 32, target_count, 96}}});
 		}
 
 		CHECK(copy_set == expected_copy_set);

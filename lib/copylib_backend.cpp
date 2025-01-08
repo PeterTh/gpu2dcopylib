@@ -470,7 +470,7 @@ void execute_copy(executor& exec, const parallel_copy_set& set) {
 		for(auto& spec : fulfilled_plan) {
 			fulfiller.fulfill(spec);
 		}
-		fulfilled_sets[current_set_idx].insert(fulfilled_plan);
+		fulfilled_sets[current_set_idx].push_back(fulfilled_plan);
 		sets_added_to_current++;
 
 		const int64_t sets_to_add_to_current = total_plans / parts_count //

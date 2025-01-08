@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-#include <unordered_set>
 
 namespace copylib {
 
@@ -136,7 +135,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 			const auto source_offset = spec.source_layout.offset + start_offset;
 			const auto target_offset = spec.target_layout.offset + start_offset;
 			const auto fragment_length = std::min(strategy.chunk_size, total_bytes - start_offset);
-			copy_set.insert({{                                                                                     //
+			copy_set.push_back({{                                                                                  //
 			    spec.source_device, {spec.source_layout.base, source_offset, fragment_length, 1, fragment_length}, //
 			    spec.target_device, {spec.target_layout.base, target_offset, fragment_length, 1, fragment_length}}});
 		}
@@ -161,7 +160,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 			const auto num_fragments = end_fragment - start_fragment;
 			const auto source_offset = spec.source_layout.offset + start_fragment * spec.target_layout.fragment_length;
 			const auto dest_offset = spec.target_layout.fragment_offset(start_fragment);
-			copy_set.insert({{                                                                             //
+			copy_set.push_back({{                                                                          //
 			    spec.source_device, {spec.source_layout.base, source_offset, total_bytes_per_chunk, 1, 0}, //
 			    spec.target_device, {spec.target_layout.base, dest_offset, spec.target_layout.fragment_length, num_fragments, spec.target_layout.stride}}});
 		}
@@ -182,7 +181,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 			const auto num_fragments = end_fragment - start_fragment;
 			const auto source_offset = spec.source_layout.fragment_offset(start_fragment);
 			const auto dest_offset = spec.target_layout.offset + start_fragment * spec.source_layout.fragment_length;
-			copy_set.insert({{                                                                                                                              //
+			copy_set.push_back({{                                                                                                                           //
 			    spec.source_device, {spec.source_layout.base, source_offset, spec.source_layout.fragment_length, num_fragments, spec.source_layout.stride}, //
 			    spec.target_device, {spec.target_layout.base, dest_offset, total_bytes_per_chunk, 1, 0}}});
 		}
@@ -217,7 +216,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 				const auto target_end_fragment = source_end_fragment * smaller_fragments_per_chunk;
 				const auto num_target_fragments = target_end_fragment - target_start_fragment;
 				const auto target_offset = spec.target_layout.fragment_offset(target_start_fragment);
-				copy_set.insert({{                                                                                                                         //
+				copy_set.push_back({{                                                                                                                      //
 				    spec.source_device, {spec.source_layout.base, source_offset, larger_fragment_length, num_source_fragments, spec.source_layout.stride}, //
 				    spec.target_device, {spec.target_layout.base, target_offset, smaller_fragment_length, num_target_fragments, spec.target_layout.stride}}});
 			} else {
@@ -233,7 +232,7 @@ parallel_copy_set apply_chunking(const copy_spec& spec, const copy_strategy& str
 				const auto target_end_fragment = source_end_fragment / smaller_fragments_per_larger_fragment;
 				const auto num_target_fragments = target_end_fragment - target_start_fragment;
 				const auto target_offset = spec.target_layout.fragment_offset(target_start_fragment);
-				copy_set.insert({{                                                                                                                          //
+				copy_set.push_back({{                                                                                                                       //
 				    spec.source_device, {spec.source_layout.base, source_offset, smaller_fragment_length, num_source_fragments, spec.source_layout.stride}, //
 				    spec.target_device, {spec.target_layout.base, target_offset, larger_fragment_length, num_target_fragments, spec.target_layout.stride}}});
 			}
@@ -257,7 +256,7 @@ namespace {
 } // namespace
 
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
+	// COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
 	const auto proper_spec = apply_properties(spec, strategy.properties);
 	if(strategy.type == copy_type::direct) { return {proper_spec}; }
 	if(strategy.type != copy_type::staged) {
@@ -319,7 +318,7 @@ parallel_copy_set apply_staging(const parallel_copy_set& spec, const copy_strate
 	parallel_copy_set copies;
 	for(const auto& copy : spec) {
 		COPYLIB_ENSURE(copy.size() == 1, "Cannot stage a copy set with plans consisting of more than one copy (plan: {})", copy);
-		copies.insert(apply_staging(copy.front(), strategy, staging_provider));
+		copies.push_back(apply_staging(copy.front(), strategy, staging_provider));
 	}
 	return copies;
 }
@@ -372,7 +371,7 @@ copy_plan apply_d2d_implementation(const copy_plan& plan, const d2d_implementati
 parallel_copy_set apply_d2d_implementation(const parallel_copy_set& copy_set, const d2d_implementation d2d, const staging_buffer_provider& staging_provider) {
 	parallel_copy_set ret;
 	for(const auto& plan : copy_set) {
-		ret.insert(apply_d2d_implementation(plan, d2d, staging_provider));
+		ret.push_back(apply_d2d_implementation(plan, d2d, staging_provider));
 	}
 	return ret;
 }

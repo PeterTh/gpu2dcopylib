@@ -5,7 +5,6 @@
 #include <sycl/sycl.hpp>
 
 #include <cstddef>
-#include <unordered_set>
 
 namespace copylib {
 
@@ -116,7 +115,7 @@ struct copy_spec {
 using copy_plan = std::vector<copy_spec>;
 
 // a parallel copy set is a set of independent copy plans which can be enacted concurrently
-using parallel_copy_set = std::unordered_set<copy_plan>;
+using parallel_copy_set = std::vector<copy_plan>;
 
 // defines the strategy type used to copy data between memories
 enum class copy_type {
