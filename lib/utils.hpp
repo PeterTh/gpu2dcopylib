@@ -6,8 +6,7 @@
 #include <string_view>
 #include <vector>
 
-#include <cassert>         // IWYU pragma: keep (used in macro)
-#include <source_location> // IWYU pragma: keep (used in macro)
+#include <cassert> // IWYU pragma: keep (used in macro)
 
 #ifdef COPYLIB_USE_FMT
 #include <fmt/core.h>
@@ -111,10 +110,8 @@ T vector_min(const std::vector<T>& values) {
 
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \
 	do {                                                                                                                                                       \
-		const auto loc = std::source_location::current();                                                                                                      \
 		if(!(_expr)) {                                                                                                                                         \
-			copylib::utils::err_print(                                                                                                                         \
-			    "Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, loc.file_name(), loc.line(), loc.function_name(), copylib::utils::format(__VA_ARGS__));         \
+			copylib::utils::err_print("Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, __FILE__, __LINE__, __FUNCTION__, copylib::utils::format(__VA_ARGS__));   \
 			assert(false);                                                                                                                                     \
 			std::exit(1);                                                                                                                                      \
 			__builtin_unreachable();                                                                                                                           \
