@@ -3,6 +3,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(syclcopylib CXX)
 
+option(COPYLIB_USE_MIMALLOC "Use the mimalloc memory allocator" ON)
+
 if(CMAKE_GENERATOR STREQUAL "Ninja")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")
 endif()
@@ -27,6 +29,25 @@ if(NOT SimSYCL_FOUND)
   endif()
 else()
   message("Using SimSYCL ${SimSYCL_VERSION} (${SimSYCL_DIR})")
+endif()
+
+if(COPYLIB_USE_MIMALLOC)
+  Include(FetchContent)
+
+  FetchContent_Declare(
+    Mimalloc
+    GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+    GIT_TAG        v1.8.9 # or a later release
+  )
+  set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
+  set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(CMAKE_MESSAGE_LOG_LEVEL "WARNING")
+  FetchContent_MakeAvailable(Mimalloc)
+  set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
+  message("Using MiMalloc")
 endif()
 
 add_subdirectory(lib)

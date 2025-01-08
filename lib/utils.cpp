@@ -5,6 +5,11 @@
 
 #include <sycl/sycl.hpp>
 
+#if COPYLIB_USE_MIMALLOC
+// override default new/delete operators to use the mimalloc memory allocator
+#include <mimalloc-new-delete.h>
+#endif
+
 namespace copylib::utils {
 
 void dump_to_cerr(std::string_view msg) { std::cerr << msg; }
