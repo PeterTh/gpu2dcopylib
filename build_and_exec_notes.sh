@@ -18,13 +18,12 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/intel/onea
 l-targets=nvptx64-nvidia-cuda -Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=sm_80"
 
 . /opt/intel/oneapi/setvars.sh
-env ONEAPI_DEVICE_SELECTOR=cuda:*
+export ONEAPI_DEVICE_SELECTOR=cuda:*
 
 # on GPUC5 (Intel)
 
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/intel/oneapi/compiler/latest/ -DCMAKE_CXX_COMPILER=/opt/intel/oneapi/compiler/latest/bin/icpx 
 
 . /opt/intel/oneapi/setvars.sh
-env ONEAPI_DEVICE_SELECTOR=level_zero:*
-
+export ONEAPI_DEVICE_SELECTOR=level_zero:*
 export COPYLIB_ALLOC_CPU_IDS=2,3

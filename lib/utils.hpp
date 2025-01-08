@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <string_view>
 #include <vector>
@@ -40,15 +41,42 @@ inline void print(std::string_view str) { dump_to_cout(str); }
 
 std::vector<std::string> split(const std::string& str, char delim);
 
+
+template <typename T, typename Ret = decltype(std::declval<T>() * 0.5)>
+Ret vector_percentile(const std::vector<T>& values, double percentile, bool is_sorted = false) {
+	std::vector<T> sorted = values;
+	if(!is_sorted) std::sort(sorted.begin(), sorted.end());
+	double div = (sorted.size() - 1) * percentile;
+	double rem = div - std::floor(div);
+	size_t idx = std::floor(div);
+	if(rem >= 0.0001 && idx + 1 < sorted.size()) {
+		return (sorted[idx] * (1.0 - rem) + sorted[idx + 1] * rem);
+	} else {
+		return sorted[idx] * 1.0;
+	}
+}
+
+template <typename T, typename Ret = decltype(std::declval<T>() * 0.5)>
+Ret vector_median(const std::vector<T>& values) {
+	return vector_percentile(values, 0.5);
+}
+
 template <typename T>
-T vector_median(const std::vector<T>& values) {
+struct metrics {
+	T median;
+	T percentile_25;
+	T percentile_75;
+};
+
+template <typename T, typename Ret = decltype(std::declval<T>() * 0.5)>
+metrics<Ret> vector_metrics(const std::vector<T>& values) {
+	metrics<Ret> result;
 	std::vector<T> sorted = values;
 	std::sort(sorted.begin(), sorted.end());
-	if(sorted.size() % 2 == 0) {
-		return (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2;
-	} else {
-		return sorted[sorted.size() / 2];
-	}
+	result.percentile_25 = vector_percentile(sorted, 0.25, true);
+	result.median = vector_percentile(sorted, 0.5, true);
+	result.percentile_75 = vector_percentile(sorted, 0.75, true);
+	return result;
 }
 
 template <typename T>

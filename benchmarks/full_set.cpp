@@ -67,7 +67,7 @@ std::vector<std::pair<T, T>> generate_pairs(const std::vector<T>& values) {
 int main(int, char**) {
 	// create an executor with a buffer size of 1 GB
 	constexpr int64_t buffer_size = 1024l * 1024l * 1024l * 1l;
-	executor exec(buffer_size, 2);
+	executor exec(buffer_size, 2, 2);
 	constexpr int64_t max_copy_extent = buffer_size / 2;
 
 	utils::print("Benchmark executor created:\n{}\n", exec.get_info());
@@ -83,23 +83,23 @@ int main(int, char**) {
 	    .properties = {copy_properties::none, copy_properties::use_kernel, copy_properties::use_2D_copy},
 	    .d2d_implementations = {d2d_implementation::direct, d2d_implementation::host_staging_at_source, d2d_implementation::host_staging_at_target,
 	        d2d_implementation::host_staging_at_both},
-	    .chunk_sizes = {0, 1024 * 1024, 32 * 1024 * 1024, 128 * 1024 * 1024},
+	    .chunk_sizes = {0, 1024, 2 * 1024, 8 * 1024},
 	    .layouts = {},
 	};
 
-	// contiguous layouts up from 8 bytes to 512 MB
-	for(int64_t i = 0; i < static_cast<int64_t>(log2(512 * 1024 * 1024)); i++) {
+	// contiguous layouts up from 4 bytes to 512 MB
+	for(int64_t i = 2; i < static_cast<int64_t>(log2(512 * 1024 * 1024)); i++) {
 		const int64_t fragment_length = 1 << i;
 		const int64_t stride = fragment_length;
 		const int64_t num_fragments = 1;
 		config.layouts.push_back({num_fragments, fragment_length, stride});
 	}
 
-	// 2D layouts with at most 8 MB total size, and at most 8k fragments; fragment lengths from 8 bytes to 1 kB
-	for(int64_t i = 0; i < static_cast<int64_t>(log2(1024)); i++) {
+	// 2D layouts with at most 32 MB total size, and at most 512*1024 fragments; fragment lengths from 4 bytes to 512 bytes
+	for(int64_t i = 2; i < static_cast<int64_t>(log2(512)); i++) {
 		const int64_t fragment_length = 1 << i;
-		const int64_t stride = 1024 * 16; // 16 kB stride
-		const int64_t num_fragments = std::min(std::min(8l * 1024l * 1024l / fragment_length, max_copy_extent / stride), 8 * 1024l);
+		const int64_t stride = 1024; // 1 kB stride
+		const int64_t num_fragments = std::min(std::min(32l * 1024l * 1024l / fragment_length, max_copy_extent / stride), 512l * 1024l);
 		config.layouts.push_back({num_fragments, fragment_length, stride});
 	}
 
@@ -129,17 +129,24 @@ int main(int, char**) {
 		}
 	}
 
-	utils::print("Planned {} benchmarks with {} repetitions each\n", benchmark_specs.size(), config.max_repetitions);
+	utils::print("Planned {} benchmarks with at most {} repetitions each\n", benchmark_specs.size(), config.max_repetitions);
 
 	std::vector<std::pair<benchmark_spec, parallel_copy_set>> benchmarks;
 	uint64_t removed_due_to_d2d = 0, removed_due_to_two_d = 0;
 	// manifest all the plans and ensure they are valid and executable on the current executor
+	int64_t manifested = 0;
 	for(const auto& spec : benchmark_specs) {
+		if(manifested % 10 == 0) {
+			if(isatty(fileno(stdout))) {
+				utils::print("\rManifesting benchmark {:7} / {:7} ({:5.1f}%)", manifested, benchmark_specs.size(), 100.0 * manifested / benchmark_specs.size());
+			} else {
+				utils::print(".");
+			}
+		}
 		COPYLIB_ENSURE(spec.spec.source_layout.total_extent() <= exec.get_buffer_size(), "Source layout too large: {}", spec.spec.source_layout);
 		COPYLIB_ENSURE(spec.spec.target_layout.total_extent() <= exec.get_buffer_size(), "Target layout too large: {}", spec.spec.target_layout);
 		const auto copy_set = manifest_strategy(spec.spec, spec.strat, basic_staging_provider{});
 		COPYLIB_ENSURE(is_valid(copy_set), "Invalid copy set: {}\n  -> generated for copy\n     {}\n     with strategy {}", copy_set, spec.spec, spec.strat);
-
 		auto exec_possible = exec.can_copy(copy_set);
 		if(exec_possible == executor::possibility::needs_d2d_copy) {
 			removed_due_to_d2d++;
@@ -148,29 +155,44 @@ int main(int, char**) {
 		} else {
 			benchmarks.emplace_back(spec, copy_set);
 		}
+		manifested++;
 	}
 
-	utils::print("Will perform {} benchmarks ({} removed due to d2d, {} removed due to 2d)\n", benchmarks.size(), removed_due_to_d2d, removed_due_to_two_d);
+	utils::print("\nWill perform {} benchmarks ({} removed due to d2d, {} removed due to 2d)\n", benchmarks.size(), removed_due_to_d2d, removed_due_to_two_d);
 
 	char hostname[256];
 	gethostname(hostname, 256);
 	const auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	const auto log_filename = std::format("benchmark_{}_{}.log", hostname, timestamp);
 	std::ofstream log(log_filename);
+	log << exec.get_info() << std::endl << std::endl;
 
-	std::unordered_map<benchmark_spec, std::vector<std::chrono::high_resolution_clock::duration>> results;
+	using clk = std::chrono::high_resolution_clock;
+	using namespace std::chrono_literals;
+	const clk::duration max_time_for_config = 1s;
+
+	std::unordered_map<benchmark_spec, std::vector<clk::duration>> results;
+	std::unordered_map<benchmark_spec, std::pair<clk::duration, bool>> skipping_info;
 	int64_t completed = 0;
 	int64_t reporting_threshold = 10;
 	int64_t total = benchmarks.size() * config.max_repetitions;
 	for(int64_t i = 0; i < config.max_repetitions; i++) {
 		for(const auto& [spec, copy_set] : benchmarks) {
+			if(skipping_info[spec].first > max_time_for_config) {
+				if(!skipping_info[spec].second) {
+					log << std::format("Skipping run {} (and all subsequent) for {} / {} due to previous runs taking too long\n", i, spec.spec, spec.strat);
+					skipping_info[spec].second = true;
+				}
+				continue;
+			}
 			exec.barrier();
-			if(i == 0) log << spec.spec << " ==> " << copy_set << std::endl;
-			auto start = std::chrono::high_resolution_clock::now();
+			// if(i == 0) log << spec.spec << " ==> " << copy_set << std::endl;
+			auto start = clk::now();
 			execute_copy(exec, copy_set);
 			exec.barrier();
-			auto end = std::chrono::high_resolution_clock::now();
+			auto end = clk::now();
 			results[spec].push_back(end - start);
+			skipping_info[spec].first += end - start;
 			completed++;
 			if(isatty(fileno(stdout))) {
 				if(completed % reporting_threshold == 0) {
@@ -185,16 +207,17 @@ int main(int, char**) {
 	utils::print("\n");
 	log.close();
 
-	std::unordered_map<benchmark_spec, double> median_times, median_gigabytes_per_second, mean_times, time_stddevs;
+	std::unordered_map<benchmark_spec, double> median_times, median_gigabytes_per_second, mean_times, time_stddevs, times_25_percent, times_75_percent;
 	for(const auto& [spec, durations] : results) {
-		const auto median = utils::vector_median(durations);
-		using namespace std::chrono_literals;
-		const auto time_seconds = median / 1.0s;
+		const auto metrics = utils::vector_metrics(durations);
+		const auto time_seconds = metrics.median / 1.0s;
 		median_times[spec] = time_seconds;
+		times_25_percent[spec] = metrics.percentile_25 / 1.0s;
+		times_75_percent[spec] = metrics.percentile_75 / 1.0s;
 		const auto total_bytes = spec.spec.source_layout.total_bytes();
 		const auto total_gigabytes = total_bytes / (1024.0 * 1024.0 * 1024.0);
 		median_gigabytes_per_second[spec] = total_gigabytes / time_seconds;
-		const auto mean = std::accumulate(durations.begin(), durations.end(), std::chrono::high_resolution_clock::duration(0)) / durations.size();
+		const auto mean = std::accumulate(durations.begin(), durations.end(), clk::duration(0)) / durations.size();
 		const auto mean_seconds = mean / 1.0s;
 		mean_times[spec] = mean_seconds;
 		const auto time_variance = std::accumulate(durations.begin(), durations.end(), 0.0, [&](double acc, const auto& dur) {
@@ -206,19 +229,22 @@ int main(int, char**) {
 
 	const auto output_filename = std::format("benchmark_results_{}_{}.csv", hostname, timestamp);
 	std::fstream out(output_filename, std::ios::out | std::ios::trunc);
-	out << "source_device,target_device,copy_type,copy_properties,d2d_implementation,chunk_size,num_fragments,fragment_length,stride,median_time,mean_time,"
-	       "time_stddev,median_gigabytes_per_second\n";
+	out << "source_device,target_device,copy_type,copy_properties,d2d_implementation,chunk_size,num_fragments,fragment_length,stride,"
+	       "median_time,time_25_percent,time_75_percent,mean_time,time_stddev,gigabytes_per_second\n";
 	for(const auto& [bench, _] : benchmarks) {
 		const auto& spec = bench.spec;
 		const auto& strat = bench.strat;
 		const auto& layout = spec.source_layout;
 		const auto& median_time = median_times[bench];
-		const auto& mean_time = mean_times[bench];
 		const auto& time_stddev = time_stddevs[bench];
+		const auto& mean_time = mean_times[bench];
+		const auto& time_25_percent = times_25_percent[bench];
+		const auto& time_75_percent = times_75_percent[bench];
 		const auto& gigs_per_second = median_gigabytes_per_second[bench];
 		out << std::format("{:4},{:4}", spec.source_device, spec.target_device)
 		    << std::format(",{:6},{:12},{:23},{:12}", strat.type, strat.properties, strat.d2d, strat.chunk_size)
-		    << std::format(",{:12},{:12},{:12},{:12.6f},{:12.6f},{:12.6f},{:12.6f}\n", layout.fragment_count, layout.fragment_length, layout.stride,
-		           median_time, mean_time, time_stddev, gigs_per_second);
+		    << std::format(",{:12},{:12},{:12}", layout.fragment_count, layout.fragment_length, layout.stride)
+		    << std::format(",{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f}\n", median_time, time_25_percent, time_75_percent, mean_time, time_stddev,
+		           gigs_per_second);
 	}
 }

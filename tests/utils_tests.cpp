@@ -29,3 +29,10 @@ TEST_CASE("calculating median of vector", "[utils]") {
 	CHECK(vector_median(std::vector{1.0, 3.0, 4.0, 5.0, 2.0, 6.0}) == 3.5);
 	CHECK(vector_median(std::vector{20, 10, 1, 1, 5}) == 5);
 }
+
+TEST_CASE("calculating vector metrics", "[utils]") {
+	const auto metrics = vector_metrics(std::vector{4, 2, 3, 1, 5});
+	CHECK(metrics.median == 3);
+	CHECK(metrics.percentile_25 == 2);
+	CHECK(metrics.percentile_75 == 4);
+}
