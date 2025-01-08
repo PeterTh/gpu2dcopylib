@@ -27,3 +27,18 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/intel/onea
 . /opt/intel/oneapi/setvars.sh
 export ONEAPI_DEVICE_SELECTOR=level_zero:*
 export COPYLIB_ALLOC_CPU_IDS=2,3
+
+# on Leonardo
+
+module load cmake/3.27.7
+module load cuda
+module load ninja
+module load gcc/12.2.0
+
+. /leonardo_work/L-AUT_Thoman/intel-oneapi/setvars.sh
+export ONEAPI_DEVICE_SELECTOR=cuda:*
+
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/leonardo_work/L-AUT_Thoman/intel-oneapi/compiler/latest/ -DCMAKE_CXX_COMPILER=/leonardo_work/L-AUT_Thoman/intel-oneapi/compiler/latest/bin/icpx -DCMAKE_CXX_FLAGS="-fsycl -fsyc
+l-targets=nvptx64-nvidia-cuda -Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=sm_80"
+
+srun -A L-AUT_Thoman --partition boost_usr_prod -n 1 --gres=gpu:2 --pty /usr/bin/bash

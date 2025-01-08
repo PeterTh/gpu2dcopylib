@@ -4,6 +4,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(syclcopylib CXX)
 
 option(COPYLIB_USE_MIMALLOC "Use the mimalloc memory allocator" ON)
+option(COPYLIB_USE_FMT "Use the fmt library rather than std::format" ON)
 
 if(CMAKE_GENERATOR STREQUAL "Ninja")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")
@@ -37,7 +38,7 @@ if(COPYLIB_USE_MIMALLOC)
   FetchContent_Declare(
     Mimalloc
     GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-    GIT_TAG        v1.8.9 # or a later release
+    GIT_TAG        v1.8.9
   )
   set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
   set(MI_BUILD_SHARED ON CACHE BOOL "" FORCE)
@@ -48,6 +49,22 @@ if(COPYLIB_USE_MIMALLOC)
   FetchContent_MakeAvailable(Mimalloc)
   set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
   message("Using MiMalloc")
+endif()
+
+if(COPYLIB_USE_FMT)
+  Include(FetchContent)
+
+  if(NOT TARGET fmt::fmt)
+    FetchContent_Declare(
+      fmt
+      GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+      GIT_TAG 11.1.1
+    )
+    set(CMAKE_MESSAGE_LOG_LEVEL "WARNING")
+    FetchContent_MakeAvailable(fmt)
+    set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
+  endif()
+  message("Using fmt")
 endif()
 
 add_subdirectory(lib)

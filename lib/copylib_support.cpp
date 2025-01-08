@@ -1,10 +1,14 @@
 #include "copylib_support.hpp"
 
+#ifdef COPYLIB_USE_FMT
+#define format_to(_a, _b, _c) fmt::format_to(_a, _b, _c)
+#endif
+
 namespace std {
 
 #define COPYLIB_OSTREAM_FOR(__type)                                                                                                                            \
-	ostream& operator<<(ostream& os, const copylib::__type& p) {                                                                                               \
-		format_to(ostreambuf_iterator<char>(os), "{}", p);                                                                                                     \
+	std::ostream& operator<<(std::ostream& os, const copylib::__type& p) {                                                                                     \
+		format_to(std::ostreambuf_iterator<char>(os), "{}", p);                                                                                                \
 		return os;                                                                                                                                             \
 	}
 

@@ -163,7 +163,7 @@ int main(int, char**) {
 	char hostname[256];
 	gethostname(hostname, 256);
 	const auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	const auto log_filename = std::format("benchmark_{}_{}.log", hostname, timestamp);
+	const auto log_filename = utils::format("benchmark_{}_{}.log", hostname, timestamp);
 	std::ofstream log(log_filename);
 	log << exec.get_info() << std::endl << std::endl;
 
@@ -180,7 +180,7 @@ int main(int, char**) {
 		for(const auto& [spec, copy_set] : benchmarks) {
 			if(skipping_info[spec].first > max_time_for_config) {
 				if(!skipping_info[spec].second) {
-					log << std::format("Skipping run {} (and all subsequent) for {} / {} due to previous runs taking too long\n", i, spec.spec, spec.strat);
+					log << utils::format("Skipping run {} (and all subsequent) for {} / {} due to previous runs taking too long\n", i, spec.spec, spec.strat);
 					skipping_info[spec].second = true;
 				}
 				continue;
@@ -227,7 +227,7 @@ int main(int, char**) {
 		time_stddevs[spec] = std::sqrt(time_variance / durations.size());
 	}
 
-	const auto output_filename = std::format("benchmark_results_{}_{}.csv", hostname, timestamp);
+	const auto output_filename = utils::format("benchmark_results_{}_{}.csv", hostname, timestamp);
 	std::fstream out(output_filename, std::ios::out | std::ios::trunc);
 	out << "source_device,target_device,copy_type,copy_properties,d2d_implementation,chunk_size,num_fragments,fragment_length,stride,"
 	       "median_time,time_25_percent,time_75_percent,mean_time,time_stddev,gigabytes_per_second\n";
@@ -241,10 +241,10 @@ int main(int, char**) {
 		const auto& time_25_percent = times_25_percent[bench];
 		const auto& time_75_percent = times_75_percent[bench];
 		const auto& gigs_per_second = median_gigabytes_per_second[bench];
-		out << std::format("{:4},{:4}", spec.source_device, spec.target_device)
-		    << std::format(",{:6},{:12},{:23},{:12}", strat.type, strat.properties, strat.d2d, strat.chunk_size)
-		    << std::format(",{:12},{:12},{:12}", layout.fragment_count, layout.fragment_length, layout.stride)
-		    << std::format(",{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f}\n", median_time, time_25_percent, time_75_percent, mean_time, time_stddev,
+		out << utils::format("{:4},{:4}", spec.source_device, spec.target_device)
+		    << utils::format(",{:6},{:12},{:23},{:12}", strat.type, strat.properties, strat.d2d, strat.chunk_size)
+		    << utils::format(",{:12},{:12},{:12}", layout.fragment_count, layout.fragment_length, layout.stride)
+		    << utils::format(",{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f},{:12.6f}\n", median_time, time_25_percent, time_75_percent, mean_time, time_stddev,
 		           gigs_per_second);
 	}
 }

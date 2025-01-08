@@ -7,10 +7,33 @@
 #include <vector>
 
 #include <cassert>         // IWYU pragma: keep (used in macro)
-#include <format>          // IWYU pragma: keep (for std::format used in macro)
 #include <source_location> // IWYU pragma: keep (used in macro)
 
+#ifdef COPYLIB_USE_FMT
+#include <fmt/core.h>
+#else
+#include <format>
+#endif
+
 namespace copylib::utils {
+
+#ifdef COPYLIB_USE_FMT
+template <typename... Args>
+using format_string = fmt::format_string<Args...>;
+
+template <typename... Args>
+[[nodiscard]] std::string format(format_string<Args...> __fmt, Args&&... __args) {
+	return fmt::format(__fmt, std::forward<Args>(__args)...);
+}
+#else
+template <typename... Args>
+using format_string = std::format_string<Args...>;
+
+template <typename... Args>
+[[nodiscard]] std::string format(format_string<Args...> __fmt, Args&&... __args) {
+	return std::format(__fmt, std::forward<Args>(__args)...);
+}
+#endif // COPYLIB_USE_FMT
 
 template <class T>
 void hash_combine(std::size_t& seed, const T& v) {
@@ -30,12 +53,12 @@ void dump_to_cerr(std::string_view);
 void dump_to_cout(std::string_view);
 
 template <typename... Args>
-void err_print(std::format_string<Args...> fmt, Args&&... args) {
-	dump_to_cerr(std::format(fmt, std::forward<Args>(args)...));
+void err_print(format_string<Args...> fmt, Args&&... args) {
+	dump_to_cerr(copylib::utils::format(fmt, std::forward<Args>(args)...));
 }
 template <typename... Args>
-void print(std::format_string<Args...> fmt, Args&&... args) {
-	dump_to_cout(std::format(fmt, std::forward<Args>(args)...));
+void print(format_string<Args...> fmt, Args&&... args) {
+	dump_to_cout(copylib::utils::format(fmt, std::forward<Args>(args)...));
 }
 inline void print(std::string_view str) { dump_to_cout(str); }
 
@@ -91,7 +114,7 @@ T vector_min(const std::vector<T>& values) {
 		const auto loc = std::source_location::current();                                                                                                      \
 		if(!(_expr)) {                                                                                                                                         \
 			copylib::utils::err_print(                                                                                                                         \
-			    "Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, loc.file_name(), loc.line(), loc.function_name(), std::format(__VA_ARGS__));                    \
+			    "Error: !{}\nIn {}:{} : {}\n => {}\n", #_expr, loc.file_name(), loc.line(), loc.function_name(), copylib::utils::format(__VA_ARGS__));         \
 			assert(false);                                                                                                                                     \
 			std::exit(1);                                                                                                                                      \
 			__builtin_unreachable();                                                                                                                           \

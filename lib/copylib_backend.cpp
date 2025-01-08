@@ -128,15 +128,15 @@ int get_cpu_for_gpu_alloc(int gpu_idx, size_t total_gpu_count) {
 }
 
 std::string executor::get_info() const {
-	auto ret = std::format("Copylib executor with {} device(s) and buffer size {} bytes\n", devices.size(), buffer_size);
-	ret += std::format("SYCL implementation: {}\n", get_sycl_impl_name());
-	ret += std::format("2D copy: {}    D2D copy: {}    Peer access: {}    Preferred wg size: {}\n", //
+	auto ret = utils::format("Copylib executor with {} device(s) and buffer size {} bytes\n", devices.size(), buffer_size);
+	ret += utils::format("SYCL implementation: {}\n", get_sycl_impl_name());
+	ret += utils::format("2D copy: {}    D2D copy: {}    Peer access: {}    Preferred wg size: {}\n", //
 	    is_2d_copy_available(), is_device_to_device_copy_available(), is_peer_memory_access_available(), get_preferred_wg_size());
-	ret += std::format("Using {} queues per device\n", get_queues_per_device());
+	ret += utils::format("Using {} queues per device\n", get_queues_per_device());
 	for(size_t i = 0; i < devices.size(); i++) {
-		ret += std::format("    Device {:2}: {} [{}]", i, //
+		ret += utils::format("    Device {:2}: {} [{}]", i, //
 		    gpu_devices[i].get_info<sycl::info::device::name>(), gpu_devices[i].get_info<sycl::info::device::vendor>());
-		ret += std::format(" (host alloc on core {})\n", get_cpu_for_gpu_alloc(i, devices.size()));
+		ret += utils::format(" (host alloc on core {})\n", get_cpu_for_gpu_alloc(i, devices.size()));
 	}
 	return ret;
 }

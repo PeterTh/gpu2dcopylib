@@ -8,7 +8,7 @@ namespace Catch {
 template <>
 struct StringMaker<copylib::copy_spec> {
 	static std::string convert(const copylib::copy_spec& value) {
-		return std::format("\n{}", value); // extra newline for comparison in test output
+		return copylib::utils::format("\n{}", value); // extra newline for comparison in test output
 	}
 };
 } // namespace Catch

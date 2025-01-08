@@ -45,63 +45,63 @@ TEST_CASE("hashing of types", "[support][hash]") {
 
 TEST_CASE("formatting of types", "[format]") {
 	SECTION("device_id") {
-		CHECK(std::format("{}", device_id::host) == "host");
-		CHECK(std::format("{}", device_id::d0) == "d0");
-		CHECK(std::format("{}", device_id::d5) == "d5");
+		CHECK(utils::format("{}", device_id::host) == "host");
+		CHECK(utils::format("{}", device_id::d0) == "d0");
+		CHECK(utils::format("{}", device_id::d5) == "d5");
 	}
 	SECTION("staging_id") {
 		const staging_id id{true, device_id::d0, 42};
-		CHECK(std::format("{}", id) == "S(42, d0host)");
+		CHECK(utils::format("{}", id) == "S(42, d0host)");
 		const staging_id id2{false, device_id::d1, 0};
-		CHECK(std::format("{}", id2) == "S(0, d1)");
+		CHECK(utils::format("{}", id2) == "S(0, d1)");
 	}
 	SECTION("data_layout") {
 		const data_layout layout{0, 0, 1024, 1, 1024};
-		CHECK(std::format("{}", layout) == "{0x0+0, [1024 * 1, 1024]}");
+		CHECK(utils::format("{}", layout) == "{0x0+0, [1024 * 1, 1024]}");
 		const data_layout staging_layout{staging_id{false, device_id::d0, 0}, 0, 1024};
-		CHECK(std::format("{}", staging_layout) == "{S(0, d0)+0, [1024 * 1, 1024]}");
+		CHECK(utils::format("{}", staging_layout) == "{S(0, d0)+0, [1024 * 1, 1024]}");
 	}
 	SECTION("copy_properties") {
-		CHECK(std::format("{}", copy_properties::none) == "");
-		CHECK(std::format("{}", copy_properties::use_kernel) == "use_kernel");
-		CHECK(std::format("{}", copy_properties::use_2D_copy) == "use_2D_copy");
-		CHECK(std::format("{}", copy_properties::use_kernel | copy_properties::use_2D_copy) == "use_kernel,use_2D_copy");
+		CHECK(utils::format("{}", copy_properties::none) == "");
+		CHECK(utils::format("{}", copy_properties::use_kernel) == "use_kernel");
+		CHECK(utils::format("{}", copy_properties::use_2D_copy) == "use_2D_copy");
+		CHECK(utils::format("{}", copy_properties::use_kernel | copy_properties::use_2D_copy) == "use_kernel,use_2D_copy");
 	}
 	SECTION("copy_spec") {
 		const copy_spec spec{device_id::d0, {0, 42, 1024, 1, 1024}, device_id::d1, {0xdead0000, 0, 256, 4, 320}};
-		CHECK(std::format("{}", spec) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]})");
+		CHECK(utils::format("{}", spec) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]})");
 		copy_spec spec2 = spec;
 		spec2.properties = copy_properties::use_kernel;
-		CHECK(std::format("{}", spec2) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]} (use_kernel))");
+		CHECK(utils::format("{}", spec2) == "copy(d0{0x0+42, [1024 * 1, 1024]}, d1{0xdead0000+0, [256 * 4, 320]} (use_kernel))");
 	}
 	SECTION("copy_type") {
-		CHECK(std::format("{}", copy_type::direct) == "direct");
-		CHECK(std::format("{}", copy_type::staged) == "staged");
+		CHECK(utils::format("{}", copy_type::direct) == "direct");
+		CHECK(utils::format("{}", copy_type::staged) == "staged");
 	}
 	SECTION("d2d_implementation") {
-		CHECK(std::format("{}", d2d_implementation::direct) == "direct");
-		CHECK(std::format("{}", d2d_implementation::host_staging_at_source) == "host_staging_at_source");
-		CHECK(std::format("{}", d2d_implementation::host_staging_at_target) == "host_staging_at_target");
-		CHECK(std::format("{}", d2d_implementation::host_staging_at_both) == "host_staging_at_both");
+		CHECK(utils::format("{}", d2d_implementation::direct) == "direct");
+		CHECK(utils::format("{}", d2d_implementation::host_staging_at_source) == "host_staging_at_source");
+		CHECK(utils::format("{}", d2d_implementation::host_staging_at_target) == "host_staging_at_target");
+		CHECK(utils::format("{}", d2d_implementation::host_staging_at_both) == "host_staging_at_both");
 	}
 	SECTION("copy_strategy") {
 		const copy_strategy strategy{copy_type::direct, copy_properties::use_kernel, 256};
-		CHECK(std::format("{}", strategy) == "strategy(direct, use_kernel, d2d:direct, chunk:256)");
+		CHECK(utils::format("{}", strategy) == "strategy(direct, use_kernel, d2d:direct, chunk:256)");
 	}
 	SECTION("copy_plan") {
 		const copy_spec spec{device_id::d0, {0, 0, 1024, 1, 1024}, device_id::d1, {0, 0, 1024, 1, 1024}};
 		const copy_plan plan{spec, spec};
-		CHECK(std::format("{}", plan)
+		CHECK(utils::format("{}", plan)
 		      == "[copy(d0{0x0+0, [1024 * 1, 1024]}, d1{0x0+0, [1024 * 1, 1024]}), copy(d0{0x0+0, [1024 * 1, 1024]}, d1{0x0+0, [1024 * 1, 1024]})]");
 	}
 	SECTION("parallel_copy_set") {
 		const copy_spec spec{device_id::d0, {0, 0, 1024, 1, 1024}, device_id::d1, {0, 0, 1024, 1, 1024}};
 		const copy_plan plan{spec, spec};
 		const parallel_copy_set set{{spec}, plan};
-		std::string str = std::format("{}", set);
-		CHECK_THAT(str, ContainsSubstring(std::format("{}", spec)));
-		CHECK_THAT(str, ContainsSubstring(std::format("{}", plan)));
-		CHECK_THAT(str, ContainsSubstring(std::format("], [", plan)));
+		std::string str = utils::format("{}", set);
+		CHECK_THAT(str, ContainsSubstring(utils::format("{}", spec)));
+		CHECK_THAT(str, ContainsSubstring(utils::format("{}", plan)));
+		CHECK_THAT(str, ContainsSubstring(utils::format("], [", plan)));
 		CHECK_THAT(str, StartsWith("{"));
 		CHECK_THAT(str, EndsWith("}"));
 	}
