@@ -3,6 +3,7 @@ SET(EXECUTABLES
     chunk_parallel
     full_set
     intra_device
+    manifest
 )
 
 foreach(EXECUTABLE ${EXECUTABLES})
