@@ -5,11 +5,39 @@
 
 using namespace copylib;
 
-int main(int, char**) {
+template <typename T>
+T parse_command_line_option(int argc, char** argv, const std::string& option, std::unordered_map<std::string, T> values, T default_value) {
+	for(int i = 1; i < argc - 1; i++) {
+		if(std::string(argv[i]) == option) {
+			auto value = values.find(argv[i + 1]);
+			if(value != values.end()) return value->second;
+		}
+	}
+	return default_value;
+}
+
+int64_t parse_command_line_option(int argc, char** argv, const std::string& option, int64_t default_value) {
+	for(int i = 1; i < argc - 1; i++) {
+		if(std::string(argv[i]) == option) { return std::stoll(argv[i + 1]); }
+	}
+	return default_value;
+}
+
+int main(int argc, char** argv) {
 	constexpr int64_t buffer_size = 1024 * 1024 * 1024;
 	constexpr int64_t queues_per_device = 2;
 	executor exec(buffer_size, 2, queues_per_device);
 	utils::print(exec.get_info());
+
+	const copy_type c_type =
+	    parse_command_line_option<copy_type>(argc, argv, "--type", {{"direct", copy_type::direct}, {"staged", copy_type::staged}}, copy_type::staged);
+	const copy_properties c_props = parse_command_line_option<copy_properties>(argc, argv, "--props",
+	    {{"none", copy_properties::none}, {"kernel", copy_properties::use_kernel}, {"2D", copy_properties::use_2D_copy}}, copy_properties::use_kernel);
+	const d2d_implementation c_d2d = parse_command_line_option<d2d_implementation>(argc, argv, "--d2d-impl",
+	    {{"direct", d2d_implementation::direct}, {"host-source", d2d_implementation::host_staging_at_source},
+	        {"host-target", d2d_implementation::host_staging_at_target}, {"host-both", d2d_implementation::host_staging_at_both}},
+	    d2d_implementation::host_staging_at_source);
+	const int64_t repetitions = parse_command_line_option(argc, argv, "--reps", 10);
 
 	auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	auto trg_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d1));
@@ -34,15 +62,13 @@ int main(int, char**) {
 	std::vector<copy_strategy> strategies;
 	std::vector<parallel_copy_set> copy_sets;
 	for(auto chunk : chunk_sizes) {
-		const auto& strat = strategies.emplace_back(copy_type::staged, copy_properties::use_kernel, d2d_implementation::host_staging_at_source, chunk);
+		const auto& strat = strategies.emplace_back(c_type, c_props, c_d2d, chunk);
 		const auto& set = copy_sets.emplace_back(manifest_strategy(spec, strat, basic_staging_provider{}));
 		COPYLIB_ENSURE(is_equivalent(set, spec), "Copy set generated does not implement spec:\nspec:{}\nset:{}\n", spec, set);
 	}
 
-	utils::print("Copying {} MB between devices, strided on both ends in a buffer of {} MB\n", //
-	    source_layout.total_bytes() / 1024 / 1024, source_layout.total_extent() / 1024 / 1024);
-
-	constexpr int64_t repetitions = 200;
+	utils::print("Copying {} MB between devices, strided on both ends in a buffer of {} MB, {} repetitions\n", //
+	    source_layout.total_bytes() / 1024 / 1024, source_layout.total_extent() / 1024 / 1024, repetitions);
 
 	for(size_t p = 0; p < chunk_sizes.size(); p++) {
 		for(int64_t i = 0; i < repetitions; i++) {

@@ -67,7 +67,8 @@ class executor {
 };
 
 
-executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx = 0, const executor::target last_target = executor::null_target);
+executor::target execute_copy(
+    executor& exec, const copy_spec& spec, int64_t queue_idx = 0, bool alternate_device = false, const executor::target last_target = executor::null_target);
 
 void execute_copy(executor& exec, const copy_plan& plan);
 

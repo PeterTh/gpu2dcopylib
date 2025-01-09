@@ -302,7 +302,7 @@ void copy_via_repeated_1D_copies(CopyFun fun, const data_layout& source_layout, 
 	}
 }
 
-executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, const executor::target last_target) {
+executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t queue_idx, bool alternate_device, const executor::target last_target) {
 	constexpr bool debug = false;
 	const device_id last_device = last_target.did;
 	if(debug) utils::err_print("{}:\n  -> last_device is {}\n", spec, last_device);
@@ -319,7 +319,9 @@ executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t que
 		return {device_id::host, 0};
 	}
 
-	const device_id device_to_use = spec.source_device == device_id::host ? spec.target_device : spec.source_device;
+	const device_id desired_device = alternate_device ? spec.target_device : spec.source_device;
+	const device_id fallback_device = alternate_device ? spec.source_device : spec.target_device;
+	const device_id device_to_use = desired_device == device_id::host ? fallback_device : desired_device;
 	const executor::target target{device_to_use, queue_idx};
 
 	if(debug) utils::err_print("  -> performing copy on queue for device {}\n", device_to_use);
@@ -329,6 +331,13 @@ executor::target execute_copy(executor& exec, const copy_spec& spec, int64_t que
 	}
 
 	auto& queue = exec.get_queue(target);
+
+	// if the source and target are contiguous, we can use a single copy operation
+	if(spec.is_contiguous()) {
+		queue.copy(spec.source_layout.base_ptr() + spec.source_layout.offset, spec.target_layout.base_ptr() + spec.target_layout.offset,
+		    spec.source_layout.total_bytes());
+		return target;
+	}
 
 	// technically, one could use a kernel for copies involving the host on some hw/sw stacks, but we'll ignore that for now
 	if(spec.properties & copy_properties::use_kernel && spec.source_device != device_id::host && spec.target_device != device_id::host) {
@@ -436,17 +445,17 @@ concept StagingFulfiller = requires(T f, copy_spec c) {
 	{ f.fulfill(c) };
 };
 
-void execute_plan_impl(executor& exec, const copy_plan& plan, StagingFulfiller auto& fulfiller, int64_t queue_idx) {
+void execute_plan_impl(executor& exec, const copy_plan& plan, StagingFulfiller auto& fulfiller, int64_t queue_idx, bool alternate_device) {
 	executor::target last_target = executor::null_target;
 	for(auto spec : plan) {
 		fulfiller.fulfill(spec);
-		last_target = execute_copy(exec, spec, queue_idx, last_target);
+		last_target = execute_copy(exec, spec, queue_idx, alternate_device, last_target);
 	}
 }
 
 void execute_copy(executor& exec, const copy_plan& plan) {
 	staging_fulfiller fulfiller(exec);
-	execute_plan_impl(exec, plan, fulfiller, 0);
+	execute_plan_impl(exec, plan, fulfiller, 0, false);
 }
 
 void execute_copy(executor& exec, const parallel_copy_set& set) {
@@ -478,8 +487,11 @@ void execute_copy(executor& exec, const parallel_copy_set& set) {
 		if(sets_added_to_current >= sets_to_add_to_current) {
 			futures.push_back(pool.submit_task([&, current_set_idx]() {
 				noop_fulfiller ful;
+				int64_t plan_idx = 0;
 				for(auto& plan : fulfilled_sets[current_set_idx]) {
-					execute_plan_impl(exec, plan, ful, current_set_idx);
+					bool use_alternate_device = plan.size() == 1 && plan_idx % 2 == 1;
+					execute_plan_impl(exec, plan, ful, current_set_idx, use_alternate_device);
+					plan_idx++;
 					plans_executed++;
 				}
 			}));
