@@ -25,4 +25,11 @@ std::vector<std::string> split(const std::string& str, char delim) {
 	return result;
 }
 
+int64_t parse_command_line_option(int argc, char** argv, const std::string& option, int64_t default_value) {
+	for(int i = 1; i < argc - 1; i++) {
+		if(std::string(argv[i]) == option) { return std::stoll(argv[i + 1]); }
+	}
+	return default_value;
+}
+
 } // namespace copylib::utils

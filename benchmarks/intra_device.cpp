@@ -4,16 +4,25 @@
 #include <vector>
 
 using namespace copylib;
+using utils::parse_command_line_option;
 
-int main(int, char**) {
+int main(int argc, char** argv) {
 	constexpr int64_t buffer_size = 256 * 1024 * 1024;
 	executor exec(buffer_size, 1);
 	utils::print(exec.get_info());
 
+	const copy_properties c_props = parse_command_line_option<copy_properties>(argc, argv, "--props",
+	    {{"none", copy_properties::none}, {"kernel", copy_properties::use_kernel}, {"2D", copy_properties::use_2D_copy}}, copy_properties::none);
+	const int64_t repetitions = parse_command_line_option(argc, argv, "--reps", 50);
+	const int64_t runs = parse_command_line_option(argc, argv, "--runs", 50);
+	const auto frag_length = parse_command_line_option(argc, argv, "--frag-length", 4);
+	const auto frag_count = parse_command_line_option(argc, argv, "--frag-count", 8192 * 4);
+	const auto stride = parse_command_line_option(argc, argv, "--stride", 2048 * 4);
+
 	auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	auto trg_buffer = reinterpret_cast<intptr_t>(exec.get_staging_buffer(device_id::d0));
 
-	const data_layout strided_layout{src_buffer, 0, 4, 8192 * 4, 2048 * 4};
+	const data_layout strided_layout{src_buffer, 0, frag_length, frag_count, stride};
 	const data_layout linear_layout{trg_buffer, 0, strided_layout.fragment_length, strided_layout.fragment_count, strided_layout.fragment_length};
 	const data_layout source_layout = strided_layout;
 	const data_layout target_layout = linear_layout;
@@ -31,10 +40,11 @@ int main(int, char**) {
 	using namespace std::chrono_literals;
 	std::vector<copy_properties> prop_options = {copy_properties::none, copy_properties::use_kernel};
 	if(exec.is_2d_copy_available()) { prop_options.push_back(copy_properties::use_2D_copy); }
+	if(c_props != copy_properties::none) { prop_options = {c_props}; }
 	std::vector<std::vector<std::chrono::high_resolution_clock::duration>> durations(prop_options.size());
 
-	constexpr int64_t repetitions = 500;
-	constexpr int64_t runs = 50;
+	utils::print("\nCopying {} kB intra device, {} runs of {} repetitions each\nlayout: {}\n\n", //
+	    source_layout.total_bytes() / 1024, runs, repetitions, source_layout);
 
 	for(int64_t run = 0; run < runs; ++run) {
 		for(size_t p = 0; p < prop_options.size(); p++) {

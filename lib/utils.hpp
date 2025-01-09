@@ -106,6 +106,19 @@ T vector_min(const std::vector<T>& values) {
 	return *std::min_element(values.begin(), values.end());
 }
 
+template <typename T>
+T parse_command_line_option(int argc, char** argv, const std::string& option, std::unordered_map<std::string, T> values, T default_value) {
+	for(int i = 1; i < argc - 1; i++) {
+		if(std::string(argv[i]) == option) {
+			auto value = values.find(argv[i + 1]);
+			if(value != values.end()) return value->second;
+		}
+	}
+	return default_value;
+}
+
+int64_t parse_command_line_option(int argc, char** argv, const std::string& option, int64_t default_value);
+
 } // namespace copylib::utils
 
 #define COPYLIB_ENSURE(_expr, ...)                                                                                                                             \

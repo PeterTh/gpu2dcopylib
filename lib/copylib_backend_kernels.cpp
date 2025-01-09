@@ -2,13 +2,8 @@
 
 namespace copylib {
 
-// This surprisingly improves peak performance in the intra-device benchmark by ~24%
-// (31.65 GB/s -> 39.03 GB/s on gpuc3)
-#if defined(__ACPP_ENABLE_CUDA_TARGET__) && defined(__SYCL_DEVICE_ONLY__)
-#define INDEX_X threadIdx.x
-#else
-#define INDEX_X idx.get_global_id(0);
-#endif
+// Directly using CUDA threadIdx.x does NOT actually change performance
+#define INDEX_X idx.get_global_id(0)
 
 template <typename T, typename IdxType>
 void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType preferred_wg_size) {

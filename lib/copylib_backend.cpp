@@ -90,11 +90,16 @@ bool executor::is_peer_memory_access_available() const {
 int32_t executor::get_preferred_wg_size() const {
 	thread_local int32_t wg_size = -1;
 	if(wg_size == -1) {
-		if(gpu_devices.empty()) { return 32; }
-		if(gpu_devices.front().get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
-			wg_size = 128;
+		auto env_str = std::getenv("COPYLIB_WG_SIZE");
+		if(env_str) {
+			wg_size = std::stoi(env_str);
 		} else {
-			wg_size = 32;
+			if(gpu_devices.empty()) { return 32; }
+			if(gpu_devices.front().get_info<sycl::info::device::vendor>().find("Intel") != std::string::npos) {
+				wg_size = 128;
+			} else {
+				wg_size = 32;
+			}
 		}
 	}
 	return wg_size;

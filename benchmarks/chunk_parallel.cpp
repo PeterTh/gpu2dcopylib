@@ -4,28 +4,11 @@
 #include <vector>
 
 using namespace copylib;
-
-template <typename T>
-T parse_command_line_option(int argc, char** argv, const std::string& option, std::unordered_map<std::string, T> values, T default_value) {
-	for(int i = 1; i < argc - 1; i++) {
-		if(std::string(argv[i]) == option) {
-			auto value = values.find(argv[i + 1]);
-			if(value != values.end()) return value->second;
-		}
-	}
-	return default_value;
-}
-
-int64_t parse_command_line_option(int argc, char** argv, const std::string& option, int64_t default_value) {
-	for(int i = 1; i < argc - 1; i++) {
-		if(std::string(argv[i]) == option) { return std::stoll(argv[i + 1]); }
-	}
-	return default_value;
-}
+using utils::parse_command_line_option;
 
 int main(int argc, char** argv) {
-	constexpr int64_t buffer_size = 1024 * 1024 * 1024;
-	constexpr int64_t queues_per_device = 2;
+	const int64_t buffer_size = parse_command_line_option(argc, argv, "--buffer-size", 256 * 1024 * 1024);
+	const int64_t queues_per_device = parse_command_line_option(argc, argv, "--queues-per-device", 2);
 	executor exec(buffer_size, 2, queues_per_device);
 	utils::print(exec.get_info());
 
@@ -37,12 +20,15 @@ int main(int argc, char** argv) {
 	    {{"direct", d2d_implementation::direct}, {"host-source", d2d_implementation::host_staging_at_source},
 	        {"host-target", d2d_implementation::host_staging_at_target}, {"host-both", d2d_implementation::host_staging_at_both}},
 	    d2d_implementation::host_staging_at_source);
+	const auto frag_length = parse_command_line_option(argc, argv, "--frag-length", 4);
+	const auto frag_count = parse_command_line_option(argc, argv, "--frag-count", 1024 * 1024 * 4 / 4);
+	const auto stride = parse_command_line_option(argc, argv, "--stride", 1024);
 	const int64_t repetitions = parse_command_line_option(argc, argv, "--reps", 10);
 
 	auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	auto trg_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d1));
 
-	const data_layout source_layout{src_buffer, 0, 8, 8 * 1024 * 1024, 128};
+	const data_layout source_layout{src_buffer, 0, frag_length, frag_count, stride};
 	const data_layout target_layout{trg_buffer, source_layout};
 
 	COPYLIB_ENSURE(source_layout.total_extent() <= buffer_size, "Buffer too small for source layout");
@@ -57,7 +43,12 @@ int main(int argc, char** argv) {
 	using clock = std::chrono::high_resolution_clock;
 	using namespace std::chrono_literals;
 	std::vector<int64_t> chunk_sizes = {
-	    0, 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024, 64 * 1024 * 1024};
+	    0, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024, 64 * 1024 * 1024};
+
+	// drop chunk sizes larger than the total size in the layout
+	chunk_sizes.erase(
+	    std::remove_if(chunk_sizes.begin(), chunk_sizes.end(), [&](int64_t chunk) { return chunk > source_layout.total_bytes(); }), chunk_sizes.end());
+
 	std::vector<std::vector<std::chrono::high_resolution_clock::duration>> durations(chunk_sizes.size());
 	std::vector<copy_strategy> strategies;
 	std::vector<parallel_copy_set> copy_sets;
