@@ -2,6 +2,14 @@
 
 namespace copylib {
 
+// This surprisingly improves peak performance in the intra-device benchmark by ~24%
+// (31.65 GB/s -> 39.03 GB/s on gpuc3)
+#if defined(__ACPP_ENABLE_CUDA_TARGET__) && defined(__SYCL_DEVICE_ONLY__)
+#define INDEX_X threadIdx.x
+#else
+#define INDEX_X idx.get_global_id(0);
+#endif
+
 template <typename T, typename IdxType>
 void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType preferred_wg_size) {
 	const T* src = reinterpret_cast<T*>(spec.source_layout.base_ptr() + spec.source_layout.offset);
@@ -20,28 +28,28 @@ void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType prefer
 		// sadly, all this sillyness is actually measurably faster, and the cases are very common
 		if(frag_elems == 1) {
 			if(tgt_stride == 1) {
-				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
-					const IdxType i = idx.get_global_id(0);
+				q.parallel_for(ndr, [=]([[maybe_unused]] sycl::nd_item<1> idx) { //
+					const IdxType i = INDEX_X;
 					const IdxType src_i = i * src_stride;
 					tgt[i] = src[src_i];
 				});
 			} else if(src_stride == 1) {
-				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
-					const IdxType i = idx.get_global_id(0);
+				q.parallel_for(ndr, [=]([[maybe_unused]] sycl::nd_item<1> idx) { //
+					const IdxType i = INDEX_X;
 					const IdxType tgt_i = i * tgt_stride;
 					tgt[tgt_i] = src[i];
 				});
 			} else {
-				q.parallel_for(ndr, [=](sycl::nd_item<1> idx) { //
-					const IdxType i = idx.get_global_id(0);
+				q.parallel_for(ndr, [=]([[maybe_unused]] sycl::nd_item<1> idx) { //
+					const IdxType i = INDEX_X;
 					const IdxType src_i = i * src_stride;
 					const IdxType tgt_i = i * tgt_stride;
 					tgt[tgt_i] = src[src_i];
 				});
 			}
 		} else {
-			q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
-				const IdxType i = idx.get_global_id(0);
+			q.parallel_for(ndr, [=]([[maybe_unused]] sycl::nd_item<1> idx) {
+				const IdxType i = INDEX_X;
 				const IdxType frag = i / frag_elems;
 				const IdxType id_in_frag = i % frag_elems;
 				tgt[frag * tgt_stride + id_in_frag] = src[frag * src_stride + id_in_frag];
@@ -52,8 +60,8 @@ void copy_with_kernel_impl(sycl::queue& q, const copy_spec& spec, IdxType prefer
 		const IdxType tgt_frag_elems = spec.target_layout.fragment_length / sizeof(T);
 		const IdxType src_stride = spec.source_layout.effective_stride() / sizeof(T);
 		const IdxType tgt_stride = spec.target_layout.effective_stride() / sizeof(T);
-		q.parallel_for(ndr, [=](sycl::nd_item<1> idx) {
-			const IdxType i = idx.get_global_id(0);
+		q.parallel_for(ndr, [=]([[maybe_unused]] sycl::nd_item<1> idx) {
+			const IdxType i = INDEX_X;
 			const IdxType src_frag = i / src_frag_elems;
 			const IdxType tgt_frag = i / tgt_frag_elems;
 			tgt[tgt_frag * tgt_stride + i % tgt_frag_elems] = src[src_frag * src_stride + i % src_frag_elems];

@@ -256,7 +256,7 @@ namespace {
 } // namespace
 
 copy_plan apply_staging(const copy_spec& spec, const copy_strategy& strategy, const staging_buffer_provider& staging_provider) {
-	// COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
+	COPYLIB_ENSURE(is_valid(spec), "Invalid copy specification, cannot stage: {}", spec);
 	const auto proper_spec = apply_properties(spec, strategy.properties);
 	if(strategy.type == copy_type::direct) { return {proper_spec}; }
 	if(strategy.type != copy_type::staged) {

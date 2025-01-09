@@ -12,6 +12,8 @@ struct device {
 	std::byte* host_buffer = nullptr;
 	std::byte* host_staging_buffer = nullptr;
 
+	device(sycl::device dev, const std::vector<sycl::queue>& queues) : dev(dev), queues(queues) {}
+
 	~device();
 };
 

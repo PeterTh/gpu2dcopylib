@@ -13,8 +13,10 @@ int main(int, char**) {
 	auto src_buffer = reinterpret_cast<intptr_t>(exec.get_buffer(device_id::d0));
 	auto trg_buffer = reinterpret_cast<intptr_t>(exec.get_staging_buffer(device_id::d0));
 
-	const data_layout source_layout{src_buffer, 0, 4, 8192 * 4, 2048 * 4};
-	const data_layout target_layout{trg_buffer, 0, source_layout.fragment_length, source_layout.fragment_count, source_layout.fragment_length};
+	const data_layout strided_layout{src_buffer, 0, 4, 8192 * 4, 2048 * 4};
+	const data_layout linear_layout{trg_buffer, 0, strided_layout.fragment_length, strided_layout.fragment_count, strided_layout.fragment_length};
+	const data_layout source_layout = strided_layout;
+	const data_layout target_layout = linear_layout;
 
 	COPYLIB_ENSURE(source_layout.total_extent() <= buffer_size, "Buffer too small for source layout");
 	COPYLIB_ENSURE(target_layout.total_extent() <= buffer_size, "Buffer too small for target layout");
@@ -31,21 +33,24 @@ int main(int, char**) {
 	if(exec.is_2d_copy_available()) { prop_options.push_back(copy_properties::use_2D_copy); }
 	std::vector<std::vector<std::chrono::high_resolution_clock::duration>> durations(prop_options.size());
 
-	constexpr int64_t repetitions = 1000;
+	constexpr int64_t repetitions = 500;
+	constexpr int64_t runs = 50;
 
-	for(size_t p = 0; p < prop_options.size(); p++) {
-		int64_t reps = (prop_options[p] == copy_properties::none) ? repetitions / 50 : repetitions;
-		for(int64_t i = 0; i < reps; i++) {
+	for(int64_t run = 0; run < runs; ++run) {
+		for(size_t p = 0; p < prop_options.size(); p++) {
+			int64_t reps = (prop_options[p] == copy_properties::none) ? repetitions / 50 : repetitions;
 			const auto props = prop_options[p];
 			const auto cur_spec = spec.with_properties(props);
 			COPYLIB_ENSURE(is_valid(cur_spec), "Invalid current copy spec: {}", cur_spec);
 			COPYLIB_ENSURE(exec.can_copy(cur_spec) == executor::possibility::possible, "Cannot execute copy with spec");
 			exec.barrier();
 			auto start = clock::now();
-			const auto tgt = execute_copy(exec, cur_spec);
-			exec.get_queue(tgt).wait_and_throw();
+			for(int64_t i = 0; i < reps; i++) {
+				execute_copy(exec, cur_spec);
+			}
+			exec.barrier();
 			auto end = clock::now();
-			durations[p].push_back(end - start);
+			durations[p].push_back((end - start) / reps);
 		}
 	}
 
