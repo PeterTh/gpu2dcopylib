@@ -1,4 +1,4 @@
-# GPU 2D Copy Lib
+# GPU 2D Copy Lib [![CI Workflow](https://github.com/PeterTh/gpu2dcopylib/actions/workflows/gpu2dcopylib_ci.yaml/badge.svg)](https://github.com/PeterTh/gpu2dcopylib/actions/workflows/gpu2dcopylib_ci.yaml) [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/celerity/celerity-runtime/blob/master/LICENSE)
 
 This library intends to provide a simple very high performance way to copy strided data with a 2D layout between GPU devices, and between CPU and GPU memory spaces.
 
