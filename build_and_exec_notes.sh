@@ -69,3 +69,8 @@ ninja install
 
 ## copylib
 cmake .. -G Ninja -DCOPYLIB_USE_MIMALLOC=false -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/leonardo_work/L-AUT_Thoman/acpp-cuda -DCMAKE_CXX_FLAGS="-fuse-ld=lld -lpthread"
+
+
+#### exec example 
+
+COPYLIB_ALLOC_CPU_IDS=0,1 COPYLIB_WG_SIZE=512 srun -A L-AUT_Thoman --partition boost_usr_prod -N 1 --exclusive --gres=gpu:4 --cpu-bind=none taskset -c 0-8 benchmarks/chunk_parallel --frag-count 4194304 --stride 256 --reps 500 --buffer-size 1073741824 --props kernel --queues-per-device 2 --d2d-impl direct --type staged

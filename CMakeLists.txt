@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.23.5)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-project(syclcopylib CXX)
+project(gpu2dcopylib CXX)
 
 option(COPYLIB_USE_MIMALLOC "Use the mimalloc memory allocator" ON)
 option(COPYLIB_USE_FMT "Use the fmt library rather than std::format" ON)
@@ -10,7 +10,7 @@ if(CMAKE_GENERATOR STREQUAL "Ninja")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fdiagnostics-color=always")
 endif()
 
-find_package(SimSYCL CONFIG QUIET)
+find_package(SimSYCL CONFIG REQUIRED)
 if(NOT SimSYCL_FOUND)
   find_package(AdaptiveCpp CONFIG QUIET)
   if(NOT AdaptiveCpp_FOUND)
