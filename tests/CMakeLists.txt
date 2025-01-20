@@ -40,3 +40,8 @@ else()
     add_executable(all_tests)
     target_link_libraries(all_tests PRIVATE ${OBJECTS} Catch2::Catch2WithMain)
 endif()
+
+# add the catch2 tests to CTest
+include(CTest)
+include(Catch)
+catch_discover_tests(all_tests)
